@@ -1,0 +1,1304 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <title>PDF Crop & Export</title>
+    <style>
+        body { font-family: sans-serif; background: #f0f0f0; margin: 0; padding: 10px; display: flex; flex-direction: column; align-items: center; font-size: 14px; }
+        
+        .toolbar { background: #fff; padding: 8px 12px; border-radius: 6px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); margin-bottom: 15px; width: 100%; max-width: 1400px; display: flex; flex-direction: column; gap: 8px; position: relative; z-index: 1000; box-sizing: border-box; }
+        
+        /* 固定表示（Pinned）時のCSS */
+        .toolbar.pinned { position: fixed; top: 10px; left: 50%; transform: translateX(-50%); width: calc(100% - 20px); max-width: 1400px; margin-bottom: 0; }
+        #toolbar-spacer { display: none; width: 100%; max-width: 1400px; margin-bottom: 15px; }
+
+        .row { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+        .divider { color: #ccc; user-select: none; }
+        .workspace { position: relative; background: #fff; box-shadow: 0 4px 10px rgba(0,0,0,0.1); }
+        #pdf-canvas { display: block; }
+        
+        /* クロップ枠のUI */
+        #crop-overlay { position: absolute; border: 2px dashed #ff0000; background: rgba(255, 0, 0, 0.1); cursor: move; display: none; box-sizing: border-box; }
+        #resize-handle { position: absolute; right: -4px; bottom: -4px; width: 12px; height: 12px; background: #ff0000; cursor: nwse-resize; }
+        
+        /* 枠近傍のコピーボタン */
+        #box-actions { position: absolute; left: 0; display: flex; gap: 4px; white-space: nowrap; cursor: default; }
+        #box-actions button { padding: 3px 8px; font-size: 11px; font-weight: bold; background: #fff; border: 1px solid #0066cc; color: #0066cc; border-radius: 4px; cursor: pointer; box-shadow: 0 2px 4px rgba(0,0,0,0.2); }
+        #box-actions button:hover { background: #0066cc; color: #fff; }
+
+        /* ズーム用カスタムメニュー */
+        #zoom-menu { display: none; position: absolute; background: white; border: 1px solid #ccc; box-shadow: 0 2px 5px rgba(0,0,0,0.2); z-index: 2000; border-radius: 4px; overflow: hidden; }
+        #zoom-menu div { padding: 8px 15px; cursor: pointer; font-size: 12px; }
+        #zoom-menu div:hover { background: #eee; }
+
+        button { padding: 4px 8px; cursor: pointer; border: 1px solid #ccc; background: #fafafa; border-radius: 4px; font-size: 12px; }
+        button:hover:not(:disabled) { background: #eee; }
+        button:disabled { opacity: 0.5; cursor: not-allowed; }
+        input[type="number"], input[type="text"], select { padding: 4px; border: 1px solid #ccc; border-radius: 4px; font-size: 12px; }
+        
+        /* 出力範囲トグルボタン風UI */
+        .toggle-group { display: inline-flex; border: 1px solid #ccc; border-radius: 4px; overflow: hidden; }
+        .toggle-btn { border: none; border-radius: 0; background: #fafafa; padding: 4px 8px; font-size: 12px; cursor: pointer; }
+        .toggle-btn.active { background: #0066cc; color: #fff; }
+        .toggle-btn:not(.active):hover:not(:disabled) { background: #eee; }
+
+        /* ピン留めボタンUI */
+        .pin-btn { display: inline-flex; align-items: center; justify-content: center; padding: 3px 6px; border: 1px solid #ccc; border-radius: 4px; background: #fafafa; cursor: pointer; margin-left: auto; }
+        .pin-btn.active { background: #0066cc; color: #fff; border-color: #0066cc; }
+        .pin-btn svg { width: 14px; height: 14px; stroke: #333; fill: none; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+        .pin-btn.active svg { stroke: #fff; fill: #fff; }
+
+        
+        /* D&Dドロップゾーン */
+        #drop-zone {
+            display: none;
+            position: fixed;
+            top: 0; left: 0; width: 100vw; height: 100vh;
+            background: rgba(0, 102, 204, 0.15);
+            z-index: 10000;
+            border: 6px dashed #0066cc;
+            box-sizing: border-box;
+            justify-content: center;
+            align-items: center;
+            font-size: 28px;
+            font-weight: bold;
+            color: #0066cc;
+            text-shadow: 0 2px 4px rgba(255,255,255,0.8);
+        }
+
+        
+        /* 出力ボタン用スタイル */
+        .export-btn { background: #e8f5e9; border-color: #a5d6a7; color: #2e7d32; font-weight: bold; }
+        button.export-btn:hover:not(:disabled) { background: #c8e6c9; }
+
+        /* ツールバーのアイコンボタン用 */
+        .icon-btn { display: inline-flex; align-items: center; justify-content: center; padding: 4px; }
+        .icon-btn svg { width: 16px; height: 16px; stroke: currentColor; fill: none; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+
+        /* プログレスバー */
+        #progress-container { display: none; width: 100%; text-align: center; margin-top: 15px; }
+        #export-progress { width: 80%; height: 8px; border-radius: 4px; overflow: hidden; }
+        #export-progress-text { font-size: 13px; margin-top: 5px; color: #555; font-weight: bold; }
+
+        /* 恐竜アニメーション・ローディングモーダル */
+        #loading {
+            display: none;
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100vw;
+            height: 100vh;
+            background: rgba(255, 255, 255, 0.88);
+            z-index: 9999;
+            flex-direction: column;
+            align-items: center;
+            justify-content: flex-start;
+            padding-top: 18vh;
+            box-sizing: border-box;
+        }
+
+        .dino-container {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            width: 320px;
+        }
+
+        .dino-stage {
+            position: relative;
+            width: 280px;
+            height: 120px;
+            overflow: hidden;
+            display: flex;
+            align-items: flex-end;
+            justify-content: center;
+        }
+
+        .dino-ground {
+            position: absolute;
+            bottom: 0;
+            left: 0;
+            width: 560px;
+            height: 2px;
+            background: repeating-linear-gradient(90deg, #535353 0, #535353 12px, transparent 12px, transparent 24px);
+            animation: ground-run 0.4s linear infinite;
+        }
+
+        @keyframes ground-run {
+            0% { transform: translateX(0); }
+            100% { transform: translateX(-24px); }
+        }
+
+        .dino-jumper {
+            position: absolute;
+            bottom: 2px;
+            left: 60px;
+            /* Y軸ジャンプはJSのWeb Animations APIで制御 */
+        }
+        .dino-svg {
+            display: block;
+            animation: dino-bounce 0.2s infinite alternate steps(2);
+        }
+
+        @keyframes dino-bounce {
+            0% { transform: translateY(0); }
+            100% { transform: translateY(-3px); }
+        }
+
+        /* 恐竜の足のパタパタ切り替え */
+        .dino-leg-a { animation: leg-a 0.2s infinite alternate; }
+        .dino-leg-b { animation: leg-b 0.2s infinite alternate; }
+
+        @keyframes leg-a {
+            0% { opacity: 1; }
+            49% { opacity: 1; }
+            50% { opacity: 0; }
+            100% { opacity: 0; }
+        }
+        @keyframes leg-b {
+            0% { opacity: 0; }
+            49% { opacity: 0; }
+            50% { opacity: 1; }
+            100% { opacity: 1; }
+        }
+
+        .loading-text {
+            margin-top: 18px;
+            font-size: 15px;
+            font-weight: bold;
+            color: #444;
+            letter-spacing: 1.5px;
+        }
+    </style>
+    <!-- ライブラリ読み込み -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+    <script>pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';</script>
+    <script src="https://unpkg.com/pdf-lib@1.17.1/dist/pdf-lib.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/FileSaver.js/2.0.5/FileSaver.min.js"></script>
+</head>
+<body>
+
+<div class="toolbar pinned" id="toolbar">
+    <div class="row">
+        <button id="btn-undo" class="icon-btn" title="元に戻す (Ctrl+Z)" disabled>
+            <svg viewBox="0 0 24 24"><path d="M3 7v6h6"></path><path d="M21 17a9 9 0 00-9-9 9 9 0 00-6 2.3L3 13"></path></svg>
+        </button>
+        <button id="btn-redo" class="icon-btn" title="やり直し (Ctrl+Y)" disabled>
+            <svg viewBox="0 0 24 24"><path d="M21 7v6h-6"></path><path d="M3 17a9 9 0 019-9 9 9 0 016 2.3l3 2.7"></path></svg>
+        </button>
+        <span class="divider">|</span>
+        <input type="file" id="file-input" accept="application/pdf" style="font-size: 12px;" title="Ctrl+O でファイルを開く">
+        <span class="divider">|</span>
+        <label>Zoom:</label>
+        <button id="btn-zoom-out" disabled>-</button>
+        <button id="btn-zoom-reset" disabled>100%</button>
+        <button id="btn-zoom-in" disabled>+</button>
+        <span class="divider">|</span>
+        <button id="btn-first" disabled>1ページへ</button>
+        <button id="btn-prev" disabled>前へ</button>
+        <button id="btn-next" disabled>次へ</button>
+        <label>Page: <input type="number" id="page-input" min="1" disabled style="width: 40px;"></label> / <span id="page-total">0</span>
+        <button id="btn-pin" class="pin-btn active" title="メニューバーの固定切替">
+            <svg viewBox="0 0 24 24">
+                <line x1="12" y1="17" x2="12" y2="22"></line>
+                <path d="M5 17h14l-1.5-6H19V4H5v7h1.5L5 17z"></path>
+            </svg>
+        </button>
+    </div>
+    <div class="row">
+        <button id="btn-copy-all" disabled>以降全枠コピー</button>
+        <button id="btn-copy-odd-even" disabled>奇偶枠コピー</button>
+        <span class="divider">|</span>
+        <label>出力DPI:
+            <select id="dpi-select">
+                <option value="144">144 (軽量)</option>
+                <option value="300" selected>300 (標準)</option>
+            </select>
+        </label>
+        <span class="divider">|</span>
+        <div class="toggle-group">
+            <button id="btn-scope-all" class="toggle-btn active" disabled>全ページ</button>
+            <button id="btn-scope-current" class="toggle-btn" disabled>現ページ</button>
+        </div>
+        <span class="divider">|</span>
+        <label>レイアウト:
+            <select id="layout-select">
+                <option value="single" selected>1枠1枚</option>
+                <option value="tile_a4">A4タイル</option>
+            </select>
+        </label>
+        <span class="divider">|</span>
+        <label>保存名: <input type="text" id="prefix-input" value="crop" style="width: 80px;"></label>
+        <span class="divider">|</span>
+        <button id="btn-export-pdf" class="export-btn" disabled>PDF</button>
+        <button id="btn-export-jpg" class="export-btn" disabled>JPG</button>
+    </div>
+</div>
+
+<div id="toolbar-spacer"></div>
+
+<div id="zoom-menu">
+    <div data-val="1.0">100%</div>
+    <div data-val="1.5">150%</div>
+    <div data-val="2.0">200%</div>
+    <div data-val="2.5">250%</div>
+    <div data-val="3.0">300%</div>
+</div>
+
+<!-- 恐竜ローディングモーダル -->
+<div id="loading">
+    <div class="dino-container">
+        <div class="dino-stage">
+            <div class="dino-ground"></div>
+            <div class="dino-jumper">
+                <svg class="dino-svg" viewBox="0 0 24 24" width="72" height="72">
+                    <!-- 恐竜本体 (ドット絵ベクター) -->
+                    <g fill="#535353">
+                        <!-- 頭部 -->
+                        <rect x="12" y="1" width="9" height="1"/>
+                        <rect x="12" y="2" width="1" height="1"/>
+                        <rect x="14" y="2" width="7" height="1"/>
+                        <rect x="12" y="3" width="9" height="2"/>
+                        <!-- 口まわり -->
+                        <rect x="12" y="5" width="4" height="3"/>
+                        <rect x="17" y="6" width="4" height="1"/>
+                        <!-- 首・胴体 -->
+                        <rect x="11" y="8" width="5" height="1"/>
+                        <rect x="10" y="9" width="6" height="1"/>
+                        <rect x="9" y="10" width="7" height="1"/>
+                        <rect x="8" y="11" width="8" height="1"/>
+                        <!-- 腕 -->
+                        <rect x="16" y="9" width="2" height="2"/>
+                        <!-- 尻尾 -->
+                        <rect x="2" y="9" width="1" height="2"/>
+                        <rect x="2" y="11" width="2" height="1"/>
+                        <rect x="2" y="12" width="3" height="1"/>
+                        <!-- 胴体下部 -->
+                        <rect x="7" y="12" width="9" height="1"/>
+                        <rect x="2" y="13" width="14" height="2"/>
+                        <rect x="3" y="15" width="12" height="1"/>
+                        <rect x="4" y="16" width="9" height="1"/>
+                        <rect x="5" y="17" width="6" height="1"/>
+                        <rect x="6" y="18" width="3" height="1"/>
+                    </g>
+                    <!-- 走る足 A (左足立ち・右足曲げ) -->
+                    <g class="dino-leg-a" fill="#535353">
+                        <rect x="6" y="19" width="2" height="2"/>
+                        <rect x="6" y="21" width="3" height="1"/>
+                        <rect x="10" y="19" width="4" height="1"/>
+                    </g>
+                    <!-- 走る足 B (右足立ち・左足曲げ) -->
+                    <g class="dino-leg-b" fill="#535353">
+                        <rect x="10" y="19" width="2" height="2"/>
+                        <rect x="10" y="21" width="3" height="1"/>
+                        <rect x="6" y="19" width="4" height="1"/>
+                    </g>
+                </svg>
+            </div>
+        </div>
+        <div class="loading-text">PDF 処理中...</div>
+        <div id="progress-container">
+            <progress id="export-progress" value="0" max="100"></progress>
+            <div id="export-progress-text">0 / 0 ページ</div>
+        </div>
+    </div>
+</div>
+
+<!-- ファイルドロップゾーン -->
+<div id="drop-zone">PDFファイルをドロップして読み込み</div>
+
+<div class="workspace" id="workspace">
+    <canvas id="pdf-canvas"></canvas>
+    <div id="crop-overlay">
+        <!-- 枠近傍のアクションボタン -->
+        <div id="box-actions">
+            <button id="btn-box-copy-all">全コピー</button>
+            <button id="btn-box-copy-odd-even">偶奇コピー</button>
+        </div>
+        <div id="resize-handle"></div>
+    </div>
+</div>
+
+<script>
+    // 状態管理
+    const state = {
+        pdfDoc: null,
+        numPages: 0,
+        pageNum: 1,
+        pageScale: 1.0, // プレビュー用のスケール
+        cropBoxes: [],  // ページごとの枠情報 (0-indexed) {x, y, w, h} (※キャンバス表示スケールでの座標)
+        exportScope: 'all', // 出力対象: 'all' | 'current'
+        isPinned: true,     // メニューバー固定状態（初期値: true）
+        isDrawing: false,
+        isDragging: false,
+        isResizing: false,
+        startX: 0, startY: 0,
+        startW: 0, startH: 0,
+        // 手のひらツール（右ドラッグ）用
+        isPanning: false,
+        panStartX: 0, panStartY: 0,
+                scrollStartX: 0, scrollStartY: 0,
+        isNudging: false
+    };
+
+    let historyStack = [];
+    let historyIndex = -1;
+
+    const JPEG_QUALITY = 0.85;
+
+    // DOM Elements
+    const canvas = document.getElementById('pdf-canvas');
+    const ctx = canvas.getContext('2d');
+    const workspace = document.getElementById('workspace');
+    const cropOverlay = document.getElementById('crop-overlay');
+    const resizeHandle = document.getElementById('resize-handle');
+    const boxActions = document.getElementById('box-actions');
+    const fileInput = document.getElementById('file-input');
+    const pageTotal = document.getElementById('page-total');
+    const pageInput = document.getElementById('page-input');
+    const prefixInput = document.getElementById('prefix-input');
+    const loading = document.getElementById('loading');
+    const btnZoomReset = document.getElementById('btn-zoom-reset');
+    const zoomMenu = document.getElementById('zoom-menu');
+    const btnScopeAll = document.getElementById('btn-scope-all');
+    const btnScopeCurrent = document.getElementById('btn-scope-current');
+    const toolbar = document.getElementById('toolbar');
+    const toolbarSpacer = document.getElementById('toolbar-spacer');
+        const btnPin = document.getElementById('btn-pin');
+    const btnUndo = document.getElementById('btn-undo');
+    const btnRedo = document.getElementById('btn-redo');
+
+    // イベントリスナー登録
+    // Undo / Redo ボタンイベント
+    btnUndo.addEventListener('click', undo);
+    btnRedo.addEventListener('click', redo);
+    fileInput.addEventListener('change', handleFileSelect);
+    document.getElementById('btn-first').addEventListener('click', () => { state.pageNum = 1; renderAndUI(); });
+    document.getElementById('btn-prev').addEventListener('click', () => { if (state.pageNum > 1) { state.pageNum--; renderAndUI(); } });
+    document.getElementById('btn-next').addEventListener('click', () => { if (state.pageNum < state.numPages) { state.pageNum++; renderAndUI(); } });
+    
+    pageInput.addEventListener('change', (e) => {
+        let val = parseInt(e.target.value, 10);
+        if (isNaN(val) || val < 1) val = 1;
+        if (val > state.numPages) val = state.numPages;
+        state.pageNum = val;
+        renderAndUI();
+    });
+
+    document.getElementById('btn-zoom-out').addEventListener('click', () => changeZoom(state.pageScale - 0.2));
+    btnZoomReset.addEventListener('click', () => changeZoom(1.0));
+    document.getElementById('btn-zoom-in').addEventListener('click', () => changeZoom(state.pageScale + 0.2));
+
+    document.getElementById('btn-copy-all').addEventListener('click', copyBoxToAll);
+    document.getElementById('btn-copy-odd-even').addEventListener('click', copyBoxToOddEven);
+    document.getElementById('btn-export-pdf').addEventListener('click', exportPDF);
+    document.getElementById('btn-export-jpg').addEventListener('click', exportJPGs);
+
+    // 枠近傍のコピーボタンイベント
+    document.getElementById('btn-box-copy-all').addEventListener('click', (e) => {
+        e.stopPropagation();
+        copyBoxToAll();
+    });
+    document.getElementById('btn-box-copy-odd-even').addEventListener('click', (e) => {
+        e.stopPropagation();
+        copyBoxToOddEven();
+    });
+    // mousedownが伝播して新規枠描画になるのを防ぐ
+    boxActions.addEventListener('mousedown', (e) => e.stopPropagation());
+
+    
+    // --- 履歴 (Undo/Redo) 管理 ---
+    function cloneBoxes(boxes) {
+        return boxes.map(box => box ? { ...box } : null);
+    }
+
+    function saveHistory() {
+        if (historyIndex < historyStack.length - 1) {
+            historyStack = historyStack.slice(0, historyIndex + 1);
+        }
+        historyStack.push({
+            boxes: cloneBoxes(state.cropBoxes),
+            scale: state.pageScale
+        });
+        historyIndex++;
+        updateHistoryUI();
+    }
+
+    function applyHistory(index) {
+        const hist = historyStack[index];
+        const ratio = state.pageScale / hist.scale;
+        state.cropBoxes = hist.boxes.map(box => {
+            if (!box) return null;
+            return {
+                x: box.x * ratio,
+                y: box.y * ratio,
+                w: box.w * ratio,
+                h: box.h * ratio
+            };
+        });
+        updateOverlay();
+        updateHistoryUI();
+    }
+
+    function undo() {
+        if (historyIndex > 0) {
+            historyIndex--;
+            applyHistory(historyIndex);
+        }
+    }
+
+    function redo() {
+        if (historyIndex < historyStack.length - 1) {
+            historyIndex++;
+            applyHistory(historyIndex);
+        }
+    }
+
+    function updateHistoryUI() {
+        btnUndo.disabled = historyIndex <= 0;
+        btnRedo.disabled = historyIndex >= historyStack.length - 1;
+    }
+
+    // ピン留めトグルイベント
+    btnPin.addEventListener('click', () => {
+        state.isPinned = !state.isPinned;
+        updatePinStyle();
+    });
+
+    function updatePinStyle() {
+        if (state.isPinned) {
+            toolbar.classList.add('pinned');
+            btnPin.classList.add('active');
+            toolbarSpacer.style.display = 'block';
+            toolbarSpacer.style.height = (toolbar.offsetHeight + 15) + 'px';
+        } else {
+            toolbar.classList.remove('pinned');
+            btnPin.classList.remove('active');
+            toolbarSpacer.style.display = 'none';
+        }
+    }
+
+    // 初期固定レイアウトの適用
+    updatePinStyle();
+    window.addEventListener('resize', () => {
+        if (state.isPinned) {
+            toolbarSpacer.style.height = (toolbar.offsetHeight + 15) + 'px';
+        }
+    });
+
+    // 出力範囲トグルボタンイベント
+    btnScopeAll.addEventListener('click', () => {
+        state.exportScope = 'all';
+        btnScopeAll.classList.add('active');
+        btnScopeCurrent.classList.remove('active');
+    });
+    btnScopeCurrent.addEventListener('click', () => {
+        state.exportScope = 'current';
+        btnScopeCurrent.classList.add('active');
+        btnScopeAll.classList.remove('active');
+    });
+
+    // --- ズーム右クリックメニュー ---
+    btnZoomReset.addEventListener('contextmenu', (e) => {
+        e.preventDefault();
+        if (btnZoomReset.disabled) return;
+        const rect = btnZoomReset.getBoundingClientRect();
+        zoomMenu.style.left = rect.left + 'px';
+        zoomMenu.style.top = (rect.bottom + window.scrollY + 5) + 'px';
+        zoomMenu.style.display = 'block';
+    });
+
+    zoomMenu.addEventListener('click', (e) => {
+        if (e.target.dataset.val) {
+            changeZoom(parseFloat(e.target.dataset.val));
+            zoomMenu.style.display = 'none';
+        }
+    });
+
+    window.addEventListener('click', (e) => {
+        if (e.target !== btnZoomReset && e.target !== zoomMenu) {
+            zoomMenu.style.display = 'none';
+        }
+    });
+
+    // ワークスペース上の標準右クリックメニューを抑止
+    workspace.addEventListener('contextmenu', (e) => e.preventDefault());
+
+
+    // --- ドラッグ＆ドロップ読込 ---
+    let dragCounter = 0;
+    const dropZone = document.getElementById('drop-zone');
+    
+    window.addEventListener('dragenter', (e) => {
+        e.preventDefault();
+        dragCounter++;
+        if (dragCounter === 1 && !state.isPanning) {
+            dropZone.style.display = 'flex';
+        }
+    });
+    window.addEventListener('dragleave', (e) => {
+        e.preventDefault();
+        dragCounter--;
+        if (dragCounter === 0) {
+            dropZone.style.display = 'none';
+        }
+    });
+    window.addEventListener('dragover', (e) => e.preventDefault());
+    window.addEventListener('drop', (e) => {
+        e.preventDefault();
+        dragCounter = 0;
+        dropZone.style.display = 'none';
+        const file = e.dataTransfer.files[0];
+        if (file && file.type === 'application/pdf') {
+            processFile(file);
+        } else if (file) {
+            alert('PDFファイルを選択してください。');
+        }
+    });
+
+    function handleFileSelect(e) {
+        const file = e.target.files[0];
+        if (!file) return;
+        processFile(file);
+    }
+
+    async function processFile(file) {
+        const loadingDiv = document.getElementById('loading');
+        loadingDiv.style.display = 'flex';
+        document.getElementById('progress-container').style.display = 'none';
+        document.querySelector('.loading-text').textContent = 'PDF 読み込み中...';
+
+        const fileReader = new FileReader();
+        fileReader.onload = async function() {
+            try {
+                const typedarray = new Uint8Array(this.result);
+                state.pdfDoc = await pdfjsLib.getDocument(typedarray).promise;
+                state.numPages = state.pdfDoc.numPages;
+                state.pageNum = 1;
+                state.pageScale = 1.0;
+                
+                state.cropBoxes = new Array(state.numPages).fill(null);
+                
+                historyStack = [];
+                historyIndex = -1;
+                saveHistory();
+                
+                document.getElementById('page-total').textContent = state.numPages;
+                renderAndUI();
+                updatePinStyle();
+            } catch (err) {
+                alert('PDFの読み込みに失敗しました。');
+                console.error(err);
+            } finally {
+                loadingDiv.style.display = 'none';
+            }
+        };
+        fileReader.readAsArrayBuffer(file);
+    }
+
+
+    function renderAndUI() {
+        updateUI();
+        renderPage(state.pageNum);
+    }
+
+    function changeZoom(newScale, centerPoint = null) {
+        if (!state.pdfDoc) return;
+        // Float誤差の丸め
+        newScale = Math.round(newScale * 10) / 10;
+        if (newScale < 0.2 || newScale > 3.0) return;
+        
+        const ratio = newScale / state.pageScale;
+        state.pageScale = newScale;
+        btnZoomReset.textContent = Math.round(newScale * 100) + '%';
+        
+        // 枠座標の再計算 (既存データを新スケールへ補正)
+        for (let i = 0; i < state.cropBoxes.length; i++) {
+            if (state.cropBoxes[i]) {
+                state.cropBoxes[i].x *= ratio;
+                state.cropBoxes[i].y *= ratio;
+                state.cropBoxes[i].w *= ratio;
+                state.cropBoxes[i].h *= ratio;
+            }
+        }
+        
+        if (centerPoint) {
+            const rect = workspace.getBoundingClientRect();
+            const mouseX = centerPoint.x - rect.left;
+            const mouseY = centerPoint.y - rect.top;
+            
+            const dx = mouseX * ratio - mouseX;
+            const dy = mouseY * ratio - mouseY;
+            
+            window.scrollBy(dx, dy);
+        }
+        
+        renderPage(state.pageNum);
+    }
+
+    // Ctrl + マウスホイールによるズーム
+    workspace.addEventListener('wheel', (e) => {
+        if (e.ctrlKey || e.metaKey) {
+            e.preventDefault();
+            const delta = e.deltaY > 0 ? -0.2 : 0.2;
+            changeZoom(state.pageScale + delta, { x: e.clientX, y: e.clientY });
+        }
+    }, { passive: false });
+
+    // 恐竜ジャンプ関数
+    function triggerDinoJump() {
+        const jumper = document.querySelector('.dino-jumper');
+        if (!jumper) return;
+        jumper.animate([
+            { transform: 'translateY(0)', easing: 'ease-out' },
+            { transform: 'translateY(-40px)', offset: 0.5, easing: 'ease-in' },
+            { transform: 'translateY(0)' }
+        ], {
+            duration: 400
+        });
+    }
+
+    // プレビュー描画
+    async function renderPage(num) {
+        const page = await state.pdfDoc.getPage(num);
+        const viewport = page.getViewport({ scale: state.pageScale });
+
+        canvas.width = viewport.width;
+        canvas.height = viewport.height;
+        workspace.style.width = viewport.width + 'px';
+        workspace.style.height = viewport.height + 'px';
+
+        const renderContext = {
+            canvasContext: ctx,
+            viewport: viewport
+        };
+        await page.render(renderContext).promise;
+
+        pageInput.value = num;
+        drawCropBox(num);
+    }
+
+    function updateUI() {
+        const hasDoc = state.pdfDoc !== null;
+        document.getElementById('btn-first').disabled = !hasDoc || state.pageNum <= 1;
+        document.getElementById('btn-prev').disabled = !hasDoc || state.pageNum <= 1;
+        document.getElementById('btn-next').disabled = !hasDoc || state.pageNum >= state.numPages;
+        pageInput.disabled = !hasDoc;
+        
+        document.getElementById('btn-zoom-out').disabled = !hasDoc;
+        btnZoomReset.disabled = !hasDoc;
+        document.getElementById('btn-zoom-in').disabled = !hasDoc;
+
+        document.getElementById('btn-copy-all').disabled = !hasDoc;
+        document.getElementById('btn-copy-odd-even').disabled = !hasDoc;
+        document.getElementById('btn-export-pdf').disabled = !hasDoc;
+        document.getElementById('btn-export-jpg').disabled = !hasDoc;
+        btnScopeAll.disabled = !hasDoc;
+        btnScopeCurrent.disabled = !hasDoc;
+    }
+
+    // --- クロップ枠 UI & 手のひらツール 操作 ---
+    workspace.addEventListener('mousedown', (e) => {
+        if (!state.pdfDoc) return;
+        
+        // 右ドラッグ (手のひらツール) の検知
+        if (e.button === 2) {
+            state.isPanning = true;
+            state.panStartX = e.clientX;
+            state.panStartY = e.clientY;
+            state.scrollStartX = window.scrollX;
+            state.scrollStartY = window.scrollY;
+            document.body.style.cursor = 'grabbing';
+            return;
+        }
+
+        // 以下、左クリック (枠操作) のみ許可
+        if (e.button !== 0) return;
+
+        const rect = workspace.getBoundingClientRect();
+        const x = e.clientX - rect.left;
+        const y = e.clientY - rect.top;
+
+        // リサイズハンドルの判定
+        if (e.target === resizeHandle) {
+            state.isResizing = true;
+            const box = state.cropBoxes[state.pageNum - 1];
+            state.startX = e.clientX;
+            state.startY = e.clientY;
+            state.startW = box.w;
+            state.startH = box.h;
+            e.stopPropagation();
+            return;
+        }
+
+        // すでに枠があり、その中をクリックした場合はドラッグ開始
+        const box = state.cropBoxes[state.pageNum - 1];
+        if (box && x >= box.x && x <= box.x + box.w && y >= box.y && y <= box.y + box.h) {
+            state.isDragging = true;
+            state.startX = x - box.x;
+            state.startY = y - box.y;
+            return;
+        }
+
+        // 新規描画
+        state.isDrawing = true;
+        state.startX = x;
+        state.startY = y;
+        state.cropBoxes[state.pageNum - 1] = { x, y, w: 0, h: 0 };
+        updateOverlay();
+    });
+
+    window.addEventListener('mousemove', (e) => {
+        // 手のひらツールの処理
+        if (state.isPanning) {
+            const dx = e.clientX - state.panStartX;
+            const dy = e.clientY - state.panStartY;
+            window.scrollTo(state.scrollStartX - dx, state.scrollStartY - dy);
+            return;
+        }
+
+        if (!state.isDrawing && !state.isDragging && !state.isResizing) return;
+        
+        const rect = workspace.getBoundingClientRect();
+        let x = e.clientX - rect.left;
+        let y = e.clientY - rect.top;
+        
+        // 境界制限
+        x = Math.max(0, Math.min(x, canvas.width));
+        y = Math.max(0, Math.min(y, canvas.height));
+
+        const box = state.cropBoxes[state.pageNum - 1];
+
+        if (state.isResizing) {
+            const dx = e.clientX - state.startX;
+            const dy = e.clientY - state.startY;
+            let newW = state.startW + dx;
+            let newH = state.startH + dy;
+            
+            // 最小サイズ制限
+            if (newW < 20) newW = 20;
+            if (newH < 20) newH = 20;
+            
+            // 右下境界制限
+            if (box.x + newW > canvas.width) newW = canvas.width - box.x;
+            if (box.y + newH > canvas.height) newH = canvas.height - box.y;
+
+            box.w = newW;
+            box.h = newH;
+        } else if (state.isDrawing) {
+            box.w = Math.abs(x - state.startX);
+            box.h = Math.abs(y - state.startY);
+            box.x = Math.min(x, state.startX);
+            box.y = Math.min(y, state.startY);
+        } else if (state.isDragging) {
+            box.x = x - state.startX;
+            box.y = y - state.startY;
+            // 右下境界制限
+            if (box.x + box.w > canvas.width) box.x = canvas.width - box.w;
+            if (box.y + box.h > canvas.height) box.y = canvas.height - box.h;
+            if (box.x < 0) box.x = 0;
+            if (box.y < 0) box.y = 0;
+        }
+        updateOverlay();
+    });
+
+    window.addEventListener('mouseup', (e) => {
+        // 手のひらツールの解除
+        if (state.isPanning && e.button === 2) {
+            state.isPanning = false;
+            document.body.style.cursor = '';
+            return;
+        }
+
+        // 枠操作の解除 (左クリックのみ)
+        if (e.button === 0) {
+            let changed = false;
+            if (state.isDrawing || state.isDragging || state.isResizing) changed = true;
+
+            state.isDrawing = false;
+            state.isDragging = false;
+            state.isResizing = false;
+            
+            // 小さすぎる枠は削除
+            const box = state.cropBoxes[state.pageNum - 1];
+            if (box && (box.w < 10 || box.h < 10)) {
+                state.cropBoxes[state.pageNum - 1] = null;
+                changed = true;
+                updateOverlay();
+            }
+
+            if (changed) saveHistory();
+        }
+    });
+
+    // キーボードショートカット & 微調整
+    window.addEventListener('keydown', (e) => {
+        // Ctrl/Cmd + O (ファイルを開く)
+        if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'o') {
+            e.preventDefault();
+            document.getElementById('file-input').click();
+            return;
+        }
+
+        // Undo / Redo ショートカット
+        if (e.ctrlKey || e.metaKey) {
+            if (e.key.toLowerCase() === 'z') {
+                e.preventDefault();
+                if (e.shiftKey) redo(); else undo();
+                return;
+            }
+            if (e.key.toLowerCase() === 'y') {
+                e.preventDefault();
+                redo();
+                return;
+            }
+        }
+
+        const box = state.cropBoxes[state.pageNum - 1];
+        if (!box) return;
+        
+        const step = e.shiftKey ? 10 : 1;
+        let changed = false;
+
+        if (e.altKey) {
+            if (e.key === 'ArrowUp') { box.h = Math.max(20, box.h - step); changed = true; }
+            if (e.key === 'ArrowDown') { box.h = Math.min(canvas.height - box.y, box.h + step); changed = true; }
+            if (e.key === 'ArrowLeft') { box.w = Math.max(20, box.w - step); changed = true; }
+            if (e.key === 'ArrowRight') { box.w = Math.min(canvas.width - box.x, box.w + step); changed = true; }
+        } else {
+            if (e.key === 'ArrowUp') { box.y -= step; changed = true; }
+            if (e.key === 'ArrowDown') { box.y += step; changed = true; }
+            if (e.key === 'ArrowLeft') { box.x -= step; changed = true; }
+            if (e.key === 'ArrowRight') { box.x += step; changed = true; }
+        }
+        
+        if (changed) {
+            e.preventDefault();
+            state.isNudging = true;
+            updateOverlay();
+        }
+    });
+
+    window.addEventListener('keyup', (e) => {
+        if (state.isNudging && ['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'].includes(e.key)) {
+            saveHistory();
+            state.isNudging = false;
+        }
+    });
+
+    function drawCropBox(num) {
+        const box = state.cropBoxes[num - 1];
+        if (box) {
+            cropOverlay.style.left = box.x + 'px';
+            cropOverlay.style.top = box.y + 'px';
+            cropOverlay.style.width = box.w + 'px';
+            cropOverlay.style.height = box.h + 'px';
+            cropOverlay.style.display = 'block';
+
+            // 枠が下部に行き過ぎた場合、ボタンの位置を枠の内側左下に避譲
+            if (canvas.height - (box.y + box.h) < 30) {
+                boxActions.style.top = 'auto';
+                boxActions.style.bottom = '4px';
+                boxActions.style.left = '4px';
+            } else {
+                boxActions.style.top = 'calc(100% + 4px)';
+                boxActions.style.bottom = 'auto';
+                boxActions.style.left = '0px';
+            }
+        } else {
+            cropOverlay.style.display = 'none';
+        }
+    }
+
+    function updateOverlay() {
+        drawCropBox(state.pageNum);
+    }
+
+    // --- 一括適用 ---
+    function copyBoxToAll() {
+        const currentBox = state.cropBoxes[state.pageNum - 1];
+        if (!currentBox) return alert('現在のページに枠がありません。');
+        for (let i = state.pageNum; i < state.numPages; i++) {
+            state.cropBoxes[i] = { ...currentBox };
+        }
+        saveHistory();
+        alert(`ページ ${state.pageNum + 1} 以降に枠をコピーしました。`);
+    }
+
+    function copyBoxToOddEven() {
+        const currentBox = state.cropBoxes[state.pageNum - 1];
+        if (!currentBox) return alert('現在のページに枠がありません。');
+        const isCurrentOdd = (state.pageNum % 2 !== 0);
+        let count = 0;
+        for (let i = state.pageNum; i < state.numPages; i++) {
+            const pageNum = i + 1;
+            const isTargetOdd = (pageNum % 2 !== 0);
+            if (isCurrentOdd === isTargetOdd) {
+                state.cropBoxes[i] = { ...currentBox };
+                count++;
+            }
+        }
+        saveHistory();
+        alert(`以降の${isCurrentOdd ? '奇数' : '偶数'}ページ (${count}件) に枠をコピーしました。`);
+    }
+
+    // 対象ページの取得（全ページ or 現ページ）
+    function getTargetPageNumbers() {
+        if (state.exportScope === 'current') {
+            return [state.pageNum];
+        }
+        const pages = [];
+        for (let i = 1; i <= state.numPages; i++) {
+            pages.push(i);
+        }
+        return pages;
+    }
+
+    // --- 高解像度レンダリング＆切り出し（共通ロジック） ---
+    async function extractPageImageData(pageNum, exportScale) {
+        const box = state.cropBoxes[pageNum - 1];
+        if (!box) return null;
+
+        const page = await state.pdfDoc.getPage(pageNum);
+        const viewport = page.getViewport({ scale: exportScale });
+        
+        // メモリ確保のためのテンポラリCanvas
+        const tempCanvas = document.createElement('canvas');
+        tempCanvas.width = viewport.width;
+        tempCanvas.height = viewport.height;
+        const tempCtx = tempCanvas.getContext('2d');
+
+        await page.render({ canvasContext: tempCtx, viewport: viewport }).promise;
+
+        // クロップ座標をスケールに合わせて変換
+        const scaleRatio = exportScale / state.pageScale;
+        const targetX = box.x * scaleRatio;
+        const targetY = box.y * scaleRatio;
+        const targetW = box.w * scaleRatio;
+        const targetH = box.h * scaleRatio;
+
+        // 切り抜き用Canvas
+        const cropCanvas = document.createElement('canvas');
+        cropCanvas.width = targetW;
+        cropCanvas.height = targetH;
+        const cropCtx = cropCanvas.getContext('2d');
+
+        cropCtx.fillStyle = '#ffffff';
+        cropCtx.fillRect(0, 0, targetW, targetH);
+        cropCtx.drawImage(tempCanvas, targetX, targetY, targetW, targetH, 0, 0, targetW, targetH);
+
+        // JPG生成
+        const base64Data = cropCanvas.toDataURL('image/jpeg', JPEG_QUALITY);
+        
+        // メモリ解放（GC支援）
+        tempCanvas.width = 0; tempCanvas.height = 0;
+        cropCanvas.width = 0; cropCanvas.height = 0;
+
+        return {
+            dataUrl: base64Data,
+            width: targetW,
+            height: targetH
+        };
+    }
+
+    // --- 出力処理 ---
+    async function exportPDF() {
+        const targetPages = getTargetPageNumbers();
+        const hasValidBox = targetPages.some(p => state.cropBoxes[p - 1] !== null);
+        if (!hasValidBox) return alert('対象ページに抽出枠が設定されていません。');
+        
+        loading.style.display = 'flex';
+        document.querySelector('.loading-text').textContent = 'PDF 書き出し中...';
+        const progContainer = document.getElementById('progress-container');
+        const progBar = document.getElementById('export-progress');
+        const progText = document.getElementById('export-progress-text');
+        progContainer.style.display = 'block';
+        progBar.max = targetPages.length;
+        progBar.value = 0;
+        progText.textContent = `0 / ${targetPages.length} ページ`;
+
+        let completed = 0;
+        
+        try {
+            const layout = document.getElementById('layout-select').value;
+            const targetDpi = parseInt(document.getElementById('dpi-select').value, 10);
+            const exportScale = targetDpi / 72; // 72dpi基準でスケール倍率を算出
+
+            // ポイント単位の最大枠サイズを算出
+            let maxW_pt = 0;
+            let maxH_pt = 0;
+            targetPages.forEach(p => {
+                const box = state.cropBoxes[p - 1];
+                if (box) {
+                    const w_pt = box.w / state.pageScale;
+                    const h_pt = box.h / state.pageScale;
+                    if (w_pt > maxW_pt) maxW_pt = w_pt;
+                    if (h_pt > maxH_pt) maxH_pt = h_pt;
+                }
+            });
+
+            // ピクセル単位の最大枠サイズ (singleレイアウト用)
+            const maxW_px = maxW_pt * exportScale;
+            const maxH_px = maxH_pt * exportScale;
+
+            const A4_PORTRAIT = [595.28, 841.89];
+            const A4_LANDSCAPE = [841.89, 595.28];
+            const MARGIN = 20;
+            const GAP = 10;
+            
+            let cols = 1, rows = 1, PAGE_SIZE = [maxW_px, maxH_px], countPerPage = 1;
+
+            if (layout === 'tile_a4') {
+                const cols_P = Math.max(1, Math.floor((A4_PORTRAIT[0] - MARGIN * 2 + GAP) / (maxW_pt + GAP)));
+                const rows_P = Math.max(1, Math.floor((A4_PORTRAIT[1] - MARGIN * 2 + GAP) / (maxH_pt + GAP)));
+                const count_P = cols_P * rows_P;
+
+                const cols_L = Math.max(1, Math.floor((A4_LANDSCAPE[0] - MARGIN * 2 + GAP) / (maxW_pt + GAP)));
+                const rows_L = Math.max(1, Math.floor((A4_LANDSCAPE[1] - MARGIN * 2 + GAP) / (maxH_pt + GAP)));
+                const count_L = cols_L * rows_L;
+
+                const isLandscape = count_L > count_P;
+                PAGE_SIZE = isLandscape ? A4_LANDSCAPE : A4_PORTRAIT;
+                cols = isLandscape ? cols_L : cols_P;
+                rows = isLandscape ? rows_L : rows_P;
+                countPerPage = cols * rows;
+            }
+
+            const pdfDoc = await PDFLib.PDFDocument.create();
+            let currentPage = null;
+            let currentIdx = 0;
+
+            for (const pageNum of targetPages) {
+                // UIアニメーションコマ更新用ウェイト
+                await new Promise(resolve => setTimeout(resolve, 10));
+
+                const imgData = await extractPageImageData(pageNum, exportScale);
+                if (!imgData) continue;
+
+                const jpgImage = await pdfDoc.embedJpg(imgData.dataUrl);
+                
+                if (layout === 'single') {
+                    const page = pdfDoc.addPage([maxW_px, maxH_px]);
+                    const drawX = (maxW_px - imgData.width) / 2;
+                    const drawY = (maxH_px - imgData.height) / 2;
+                    page.drawImage(jpgImage, {
+                        x: drawX,
+                        y: drawY,
+                        width: imgData.width,
+                        height: imgData.height,
+                    });
+                } else {
+                    if (currentIdx % countPerPage === 0) {
+                        currentPage = pdfDoc.addPage(PAGE_SIZE);
+                    }
+                    
+                    const col = currentIdx % cols;
+                    const row = Math.floor((currentIdx % countPerPage) / cols);
+                    
+                    const img_w_pt = imgData.width / exportScale;
+                    const img_h_pt = imgData.height / exportScale;
+                    
+                    const drawX = MARGIN + col * (maxW_pt + GAP) + (maxW_pt - img_w_pt) / 2;
+                    const drawY_top = MARGIN + row * (maxH_pt + GAP) + (maxH_pt - img_h_pt) / 2;
+                    const drawY = PAGE_SIZE[1] - drawY_top - img_h_pt;
+                    
+                    currentPage.drawImage(jpgImage, {
+                        x: drawX,
+                        y: drawY,
+                        width: img_w_pt,
+                        height: img_h_pt,
+                    });
+                    currentIdx++;
+                }
+                                
+                completed++;
+                progBar.value = completed;
+                progText.textContent = `${completed} / ${targetPages.length} ページ`;
+                if (completed % 7 === 0) triggerDinoJump();
+            }
+
+            const pdfBytes = await pdfDoc.save();
+            const blob = new Blob([pdfBytes], { type: "application/pdf" });
+            const prefix = prefixInput.value || 'crop';
+            const suffix = (state.exportScope === 'current') ? `_p${state.pageNum}` : '';
+            saveAs(blob, `${prefix}${suffix}.pdf`);
+
+        } catch (e) {
+            console.error(e);
+            alert('PDF生成中にエラーが発生しました。');
+        } finally {
+            loading.style.display = 'none';
+        }
+    }
+
+    async function exportJPGs() {
+        const targetPages = getTargetPageNumbers();
+        const hasValidBox = targetPages.some(p => state.cropBoxes[p - 1] !== null);
+        if (!hasValidBox) return alert('対象ページに抽出枠が設定されていません。');
+        
+        // File System Access API の対応確認
+        if (!window.showDirectoryPicker) {
+            return alert('お使いのブラウザは直接保存(File System Access API)に対応していません。ChromeまたはEdgeをご利用ください。');
+        }
+
+        let dirHandle;
+        try {
+            // ユーザーに保存先フォルダを選択させる
+            dirHandle = await window.showDirectoryPicker({ mode: 'readwrite' });
+        } catch (err) {
+            // ユーザーが選択をキャンセルした場合
+            if (err.name !== 'AbortError') console.error(err);
+            return; 
+        }
+
+        loading.style.display = 'flex';
+        document.querySelector('.loading-text').textContent = 'PDF 書き出し中...';
+        const progContainer = document.getElementById('progress-container');
+        const progBar = document.getElementById('export-progress');
+        const progText = document.getElementById('export-progress-text');
+        progContainer.style.display = 'block';
+        progBar.max = targetPages.length;
+        progBar.value = 0;
+        progText.textContent = `0 / ${targetPages.length} ページ`;
+
+        let completed = 0;
+        
+        try {
+            const prefix = prefixInput.value || 'crop';
+            const layout = document.getElementById('layout-select').value;
+            const targetDpi = parseInt(document.getElementById('dpi-select').value, 10);
+            const exportScale = targetDpi / 72;
+
+            let maxW_pt = 0;
+            let maxH_pt = 0;
+            targetPages.forEach(p => {
+                const box = state.cropBoxes[p - 1];
+                if (box) {
+                    const w_pt = box.w / state.pageScale;
+                    const h_pt = box.h / state.pageScale;
+                    if (w_pt > maxW_pt) maxW_pt = w_pt;
+                    if (h_pt > maxH_pt) maxH_pt = h_pt;
+                }
+            });
+
+            const A4_PORTRAIT = [595.28, 841.89];
+            const A4_LANDSCAPE = [841.89, 595.28];
+            const MARGIN = 20;
+            const GAP = 10;
+            
+            let cols = 1, rows = 1, PAGE_SIZE = null, countPerPage = 1;
+
+            if (layout === 'tile_a4') {
+                const cols_P = Math.max(1, Math.floor((A4_PORTRAIT[0] - MARGIN * 2 + GAP) / (maxW_pt + GAP)));
+                const rows_P = Math.max(1, Math.floor((A4_PORTRAIT[1] - MARGIN * 2 + GAP) / (maxH_pt + GAP)));
+                const count_P = cols_P * rows_P;
+
+                const cols_L = Math.max(1, Math.floor((A4_LANDSCAPE[0] - MARGIN * 2 + GAP) / (maxW_pt + GAP)));
+                const rows_L = Math.max(1, Math.floor((A4_LANDSCAPE[1] - MARGIN * 2 + GAP) / (maxH_pt + GAP)));
+                const count_L = cols_L * rows_L;
+
+                const isLandscape = count_L > count_P;
+                PAGE_SIZE = isLandscape ? A4_LANDSCAPE : A4_PORTRAIT;
+                cols = isLandscape ? cols_L : cols_P;
+                rows = isLandscape ? rows_L : rows_P;
+                countPerPage = cols * rows;
+            }
+
+            let currentIdx = 0;
+            let a4PageNum = 1;
+            let tileCanvas = null;
+            let tileCtx = null;
+
+            for (const pageNum of targetPages) {
+                // UIアニメーションコマ更新用ウェイト
+                await new Promise(resolve => setTimeout(resolve, 10));
+
+                const imgData = await extractPageImageData(pageNum, exportScale);
+                if (imgData) {
+                    if (layout === 'single') {
+                        // dataURLをBlob化
+                        const res = await fetch(imgData.dataUrl);
+                        const blob = await res.blob();
+                        
+                        const fileName = `${prefix}_${String(pageNum).padStart(3, '0')}.jpg`;
+                        const fileHandle = await dirHandle.getFileHandle(fileName, { create: true });
+                        const writable = await fileHandle.createWritable();
+                        await writable.write(blob);
+                        await writable.close();
+                    } else {
+                        if (currentIdx % countPerPage === 0) {
+                            tileCanvas = document.createElement('canvas');
+                            tileCanvas.width = PAGE_SIZE[0] * exportScale;
+                            tileCanvas.height = PAGE_SIZE[1] * exportScale;
+                            tileCtx = tileCanvas.getContext('2d');
+                            tileCtx.fillStyle = '#ffffff';
+                            tileCtx.fillRect(0, 0, tileCanvas.width, tileCanvas.height);
+                        }
+                        
+                        const col = currentIdx % cols;
+                        const row = Math.floor((currentIdx % countPerPage) / cols);
+                        
+                        const img_w_pt = imgData.width / exportScale;
+                        const img_h_pt = imgData.height / exportScale;
+                        
+                        const x_pt = MARGIN + col * (maxW_pt + GAP) + (maxW_pt - img_w_pt) / 2;
+                        const y_pt = MARGIN + row * (maxH_pt + GAP) + (maxH_pt - img_h_pt) / 2;
+                        
+                        const img = new Image();
+                        img.src = imgData.dataUrl;
+                        await new Promise(resolve => { img.onload = resolve; });
+                        
+                        tileCtx.drawImage(img, x_pt * exportScale, y_pt * exportScale, imgData.width, imgData.height);
+                        
+                        currentIdx++;
+                        
+                        if (currentIdx % countPerPage === 0) {
+                            const base64 = tileCanvas.toDataURL('image/jpeg', JPEG_QUALITY);
+                            const res = await fetch(base64);
+                            const blob = await res.blob();
+                            
+                            const fileName = `${prefix}_A4_${String(a4PageNum).padStart(3, '0')}.jpg`;
+                            const fileHandle = await dirHandle.getFileHandle(fileName, { create: true });
+                            const writable = await fileHandle.createWritable();
+                            await writable.write(blob);
+                            await writable.close();
+                            a4PageNum++;
+                            
+                            tileCanvas.width = 0;
+                            tileCanvas.height = 0;
+                            tileCanvas = null;
+                            tileCtx = null;
+                        }
+                    }
+                }
+                                
+                completed++;
+                progBar.value = completed;
+                progText.textContent = `${completed} / ${targetPages.length} ページ`;
+                if (completed % 7 === 0) triggerDinoJump();
+            }
+
+            if (layout === 'tile_a4' && tileCanvas) {
+                const base64 = tileCanvas.toDataURL('image/jpeg', JPEG_QUALITY);
+                const res = await fetch(base64);
+                const blob = await res.blob();
+                
+                const fileName = `${prefix}_A4_${String(a4PageNum).padStart(3, '0')}.jpg`;
+                const fileHandle = await dirHandle.getFileHandle(fileName, { create: true });
+                const writable = await fileHandle.createWritable();
+                await writable.write(blob);
+                await writable.close();
+            }
+
+            alert('フォルダへの保存が完了しました。');
+
+        } catch (e) {
+            console.error(e);
+            alert('JPG保存中にエラーが発生しました。');
+        } finally {
+            loading.style.display = 'none';
+        }
+    }
+</script>
+</body>
+</html>
