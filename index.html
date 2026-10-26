@@ -954,13 +954,29 @@
         return pages;
     }
 
+    // プレビュー座標はPDF.jsのユーザー空間単位。出力時はページごとの実寸(pt)へ変換する。
+    async function getMaxCropSizeInPoints(targetPages) {
+        let width = 0, height = 0;
+        for (const pageNum of targetPages) {
+            const box = state.cropBoxes[pageNum - 1];
+            if (!box) continue;
+            const page = await state.pdfDoc.getPage(pageNum);
+            const pointsPerPreviewPixel = page.userUnit / state.pageScale;
+            width = Math.max(width, box.w * pointsPerPreviewPixel);
+            height = Math.max(height, box.h * pointsPerPreviewPixel);
+        }
+        return { width, height };
+    }
+
     // --- 高解像度レンダリング＆切り出し（共通ロジック） ---
     async function extractPageImageData(pageNum, exportScale) {
         const box = state.cropBoxes[pageNum - 1];
         if (!box) return null;
 
         const page = await state.pdfDoc.getPage(pageNum);
-        const viewport = page.getViewport({ scale: exportScale });
+        // PDF.js 3.xのviewportはUserUnitを適用しないため、実寸に応じて描画倍率を補正。
+        const renderScale = exportScale * page.userUnit;
+        const viewport = page.getViewport({ scale: renderScale });
         
         // メモリ確保のためのテンポラリCanvas
         const tempCanvas = document.createElement('canvas');
@@ -971,7 +987,7 @@
         await page.render({ canvasContext: tempCtx, viewport: viewport }).promise;
 
         // クロップ座標をスケールに合わせて変換
-        const scaleRatio = exportScale / state.pageScale;
+        const scaleRatio = renderScale / state.pageScale;
         const targetX = box.x * scaleRatio;
         const targetY = box.y * scaleRatio;
         const targetW = box.w * scaleRatio;
@@ -1025,17 +1041,7 @@
             const exportScale = targetDpi / 72; // 72dpi基準でスケール倍率を算出
 
             // ポイント単位の最大枠サイズを算出
-            let maxW_pt = 0;
-            let maxH_pt = 0;
-            targetPages.forEach(p => {
-                const box = state.cropBoxes[p - 1];
-                if (box) {
-                    const w_pt = box.w / state.pageScale;
-                    const h_pt = box.h / state.pageScale;
-                    if (w_pt > maxW_pt) maxW_pt = w_pt;
-                    if (h_pt > maxH_pt) maxH_pt = h_pt;
-                }
-            });
+            const { width: maxW_pt, height: maxH_pt } = await getMaxCropSizeInPoints(targetPages);
 
             const A4_PORTRAIT = [595.28, 841.89];
             const A4_LANDSCAPE = [841.89, 595.28];
@@ -1165,17 +1171,7 @@
             const targetDpi = parseInt(document.getElementById('dpi-select').value, 10);
             const exportScale = targetDpi / 72;
 
-            let maxW_pt = 0;
-            let maxH_pt = 0;
-            targetPages.forEach(p => {
-                const box = state.cropBoxes[p - 1];
-                if (box) {
-                    const w_pt = box.w / state.pageScale;
-                    const h_pt = box.h / state.pageScale;
-                    if (w_pt > maxW_pt) maxW_pt = w_pt;
-                    if (h_pt > maxH_pt) maxH_pt = h_pt;
-                }
-            });
+            const { width: maxW_pt, height: maxH_pt } = await getMaxCropSizeInPoints(targetPages);
 
             const A4_PORTRAIT = [595.28, 841.89];
             const A4_LANDSCAPE = [841.89, 595.28];
