@@ -1,6 +1,7 @@
 // Run this async function in the app page with Playwright browser_evaluate.
 // Uses real PDF export and rendering; intercepts only the download destination.
 async () => {
+    document.getElementById('source-paper-select').value = 'pdf';
     const originalSaveAs = window.saveAs;
     const failures = [];
     const results = [];

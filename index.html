@@ -2,6 +2,7 @@
 <html lang="ja">
 <head>
     <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>PDF Crop & Export</title>
     <style>
         body { font-family: sans-serif; background: #f0f0f0; margin: 0; padding: 10px; display: flex; flex-direction: column; align-items: center; font-size: 14px; }
@@ -13,6 +14,8 @@
         #toolbar-spacer { display: none; width: 100%; max-width: 1400px; margin-bottom: 15px; }
 
         .row { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+        .control-group, .toolbar label { display: inline-flex; gap: 6px; align-items: center; white-space: nowrap; }
+        #file-input { width: 220px; min-width: 0; max-width: 100%; }
         .divider { color: #ccc; user-select: none; }
         .workspace { position: relative; background: #fff; box-shadow: 0 4px 10px rgba(0,0,0,0.1); }
         #pdf-canvas { display: block; }
@@ -37,8 +40,8 @@
         input[type="number"], input[type="text"], select { padding: 4px; border: 1px solid #ccc; border-radius: 4px; font-size: 12px; }
         
         /* 出力範囲トグルボタン風UI */
-        .toggle-group { display: inline-flex; border: 1px solid #ccc; border-radius: 4px; overflow: hidden; }
-        .toggle-btn { border: none; border-radius: 0; background: #fafafa; padding: 4px 8px; font-size: 12px; cursor: pointer; }
+        .toggle-group { display: inline-flex; gap: 6px; }
+        .toggle-btn { border: 1px solid #ccc; border-radius: 4px; background: #fafafa; padding: 4px 8px; font-size: 12px; cursor: pointer; }
         .toggle-btn.active { background: #0066cc; color: #fff; }
         .toggle-btn:not(.active):hover:not(:disabled) { background: #eee; }
 
@@ -189,15 +192,28 @@
         <span class="divider">|</span>
         <input type="file" id="file-input" accept="application/pdf" style="font-size: 12px;" title="Ctrl+O でファイルを開く">
         <span class="divider">|</span>
+        <label>元用紙:
+            <select id="source-paper-select" title="元ページ全体を選んだ用紙サイズとして扱います。PDFの設定どおりではPDF内の寸法を使います。">
+                <option value="a4_portrait" selected>A4縦</option>
+                <option value="a3_landscape">A3横</option>
+                <option value="b4_landscape">B4横</option>
+                <option value="pdf">PDFの設定どおり</option>
+            </select>
+        </label>
+        <span class="divider">|</span>
+        <div class="control-group">
         <label>Zoom:</label>
         <button id="btn-zoom-out" disabled>-</button>
         <button id="btn-zoom-reset" disabled>100%</button>
         <button id="btn-zoom-in" disabled>+</button>
+        </div>
         <span class="divider">|</span>
+        <div class="control-group">
         <button id="btn-first" disabled>1ページへ</button>
         <button id="btn-prev" disabled>前へ</button>
         <button id="btn-next" disabled>次へ</button>
         <label>Page: <input type="number" id="page-input" min="1" disabled style="width: 40px;"></label> / <span id="page-total">0</span>
+        </div>
         <button id="btn-pin" class="pin-btn active" title="メニューバーの固定切替">
             <svg viewBox="0 0 24 24">
                 <line x1="12" y1="17" x2="12" y2="22"></line>
@@ -345,6 +361,11 @@
     let historyIndex = -1;
 
     const JPEG_QUALITY = 0.85;
+    const SOURCE_PAPER_MM = {
+        a4_portrait: [210, 297],
+        a3_landscape: [420, 297],
+        b4_landscape: [364, 257] // JIS B4
+    };
 
     // DOM Elements
     const canvas = document.getElementById('pdf-canvas');
@@ -954,54 +975,88 @@
         return pages;
     }
 
+    // プレビューのページ全体を、選択した元用紙の実寸へ対応させる。
+    function getPagePointScale(page, sourcePaper = document.getElementById('source-paper-select').value) {
+        const paper = SOURCE_PAPER_MM[sourcePaper];
+        if (!paper) return { x: page.userUnit, y: page.userUnit };
+        const viewport = page.getViewport({ scale: 1 });
+        return { x: paper[0] * 72 / 25.4 / viewport.width,
+            y: paper[1] * 72 / 25.4 / viewport.height };
+    }
+
     // プレビュー座標はPDF.jsのユーザー空間単位。出力時はページごとの実寸(pt)へ変換する。
-    async function getMaxCropSizeInPoints(targetPages) {
+    async function getMaxCropSizeInPoints(targetPages, sourcePaper = document.getElementById('source-paper-select').value) {
         let width = 0, height = 0;
         for (const pageNum of targetPages) {
             const box = state.cropBoxes[pageNum - 1];
             if (!box) continue;
             const page = await state.pdfDoc.getPage(pageNum);
-            const pointsPerPreviewPixel = page.userUnit / state.pageScale;
-            width = Math.max(width, box.w * pointsPerPreviewPixel);
-            height = Math.max(height, box.h * pointsPerPreviewPixel);
+            const scale = getPagePointScale(page, sourcePaper);
+            width = Math.max(width, box.w * scale.x / state.pageScale);
+            height = Math.max(height, box.h * scale.y / state.pageScale);
         }
         return { width, height };
     }
 
+    function getA4TileLayout(width, height) {
+        if (!(width > 0 && height > 0)) throw new Error('切り出し枠の大きさを確認してください。');
+        const margin = 20, gap = 10;
+        const candidates = [[595.28, 841.89], [841.89, 595.28]].map(pageSize => {
+            const availableW = pageSize[0] - margin * 2;
+            const availableH = pageSize[1] - margin * 2;
+            const cols = Math.floor((availableW + gap) / (width + gap) + 1e-9);
+            const rows = Math.floor((availableH + gap) / (height + gap) + 1e-9);
+            return { pageSize, cols, rows, countPerPage: cols * rows,
+                fits: cols > 0 && rows > 0,
+                scale: Math.min(1, availableW / width, availableH / height) };
+        });
+        const fitting = candidates.filter(c => c.fits);
+        const chosen = fitting.length
+            ? fitting.reduce((best, c) => c.countPerPage > best.countPerPage ? c : best)
+            : candidates.reduce((best, c) => c.scale > best.scale ? c : best);
+        const scale = fitting.length ? 1 : chosen.scale;
+        const cellWidth = width * scale, cellHeight = height * scale;
+        const cols = Math.floor((chosen.pageSize[0] - margin * 2 + gap) / (cellWidth + gap) + 1e-9);
+        const rows = Math.floor((chosen.pageSize[1] - margin * 2 + gap) / (cellHeight + gap) + 1e-9);
+        return { pageSize: chosen.pageSize, cols, rows, countPerPage: cols * rows,
+            scale, cellWidth, cellHeight, margin, gap };
+    }
+
     // --- 高解像度レンダリング＆切り出し（共通ロジック） ---
-    async function extractPageImageData(pageNum, exportScale) {
+    async function extractPageImageData(pageNum, exportScale, sourcePaper = document.getElementById('source-paper-select').value) {
         const box = state.cropBoxes[pageNum - 1];
         if (!box) return null;
 
         const page = await state.pdfDoc.getPage(pageNum);
-        // PDF.js 3.xのviewportはUserUnitを適用しないため、実寸に応じて描画倍率を補正。
-        const renderScale = exportScale * page.userUnit;
-        const viewport = page.getViewport({ scale: renderScale });
+        const pointScale = getPagePointScale(page, sourcePaper);
+        const viewport = page.getViewport({ scale: exportScale });
         
         // メモリ確保のためのテンポラリCanvas
         const tempCanvas = document.createElement('canvas');
-        tempCanvas.width = viewport.width;
-        tempCanvas.height = viewport.height;
+        tempCanvas.width = Math.ceil(viewport.width * pointScale.x);
+        tempCanvas.height = Math.ceil(viewport.height * pointScale.y);
         const tempCtx = tempCanvas.getContext('2d');
 
-        await page.render({ canvasContext: tempCtx, viewport: viewport }).promise;
+        await page.render({ canvasContext: tempCtx, viewport,
+            transform: [pointScale.x, 0, 0, pointScale.y, 0, 0] }).promise;
 
         // クロップ座標をスケールに合わせて変換
-        const scaleRatio = renderScale / state.pageScale;
-        const targetX = box.x * scaleRatio;
-        const targetY = box.y * scaleRatio;
-        const targetW = box.w * scaleRatio;
-        const targetH = box.h * scaleRatio;
+        const scaleX = exportScale * pointScale.x / state.pageScale;
+        const scaleY = exportScale * pointScale.y / state.pageScale;
+        const targetX = box.x * scaleX;
+        const targetY = box.y * scaleY;
+        const targetW = box.w * scaleX;
+        const targetH = box.h * scaleY;
 
         // 切り抜き用Canvas
         const cropCanvas = document.createElement('canvas');
-        cropCanvas.width = targetW;
-        cropCanvas.height = targetH;
+        cropCanvas.width = Math.max(1, Math.round(targetW));
+        cropCanvas.height = Math.max(1, Math.round(targetH));
         const cropCtx = cropCanvas.getContext('2d');
 
         cropCtx.fillStyle = '#ffffff';
-        cropCtx.fillRect(0, 0, targetW, targetH);
-        cropCtx.drawImage(tempCanvas, targetX, targetY, targetW, targetH, 0, 0, targetW, targetH);
+        cropCtx.fillRect(0, 0, cropCanvas.width, cropCanvas.height);
+        cropCtx.drawImage(tempCanvas, targetX, targetY, targetW, targetH, 0, 0, cropCanvas.width, cropCanvas.height);
 
         // JPG生成
         const base64Data = cropCanvas.toDataURL('image/jpeg', JPEG_QUALITY);
@@ -1037,34 +1092,14 @@
         
         try {
             const layout = document.getElementById('layout-select').value;
+            const sourcePaper = document.getElementById('source-paper-select').value;
             const targetDpi = parseInt(document.getElementById('dpi-select').value, 10);
             const exportScale = targetDpi / 72; // 72dpi基準でスケール倍率を算出
 
             // ポイント単位の最大枠サイズを算出
-            const { width: maxW_pt, height: maxH_pt } = await getMaxCropSizeInPoints(targetPages);
+            const { width: maxW_pt, height: maxH_pt } = await getMaxCropSizeInPoints(targetPages, sourcePaper);
 
-            const A4_PORTRAIT = [595.28, 841.89];
-            const A4_LANDSCAPE = [841.89, 595.28];
-            const MARGIN = 20;
-            const GAP = 10;
-            
-            let cols = 1, rows = 1, PAGE_SIZE = [maxW_pt, maxH_pt], countPerPage = 1;
-
-            if (layout === 'tile_a4') {
-                const cols_P = Math.max(1, Math.floor((A4_PORTRAIT[0] - MARGIN * 2 + GAP) / (maxW_pt + GAP)));
-                const rows_P = Math.max(1, Math.floor((A4_PORTRAIT[1] - MARGIN * 2 + GAP) / (maxH_pt + GAP)));
-                const count_P = cols_P * rows_P;
-
-                const cols_L = Math.max(1, Math.floor((A4_LANDSCAPE[0] - MARGIN * 2 + GAP) / (maxW_pt + GAP)));
-                const rows_L = Math.max(1, Math.floor((A4_LANDSCAPE[1] - MARGIN * 2 + GAP) / (maxH_pt + GAP)));
-                const count_L = cols_L * rows_L;
-
-                const isLandscape = count_L > count_P;
-                PAGE_SIZE = isLandscape ? A4_LANDSCAPE : A4_PORTRAIT;
-                cols = isLandscape ? cols_L : cols_P;
-                rows = isLandscape ? rows_L : rows_P;
-                countPerPage = cols * rows;
-            }
+            const tile = layout === 'tile_a4' ? getA4TileLayout(maxW_pt, maxH_pt) : null;
 
             const pdfDoc = await PDFLib.PDFDocument.create();
             let currentPage = null;
@@ -1074,7 +1109,7 @@
                 // UIアニメーションコマ更新用ウェイト
                 await new Promise(resolve => setTimeout(resolve, 10));
 
-                const imgData = await extractPageImageData(pageNum, exportScale);
+                const imgData = await extractPageImageData(pageNum, exportScale, sourcePaper);
                 if (!imgData) continue;
 
                 const jpgImage = await pdfDoc.embedJpg(imgData.dataUrl);
@@ -1093,22 +1128,23 @@
                         height: img_h_pt,
                     });
                 } else {
-                    if (currentIdx % countPerPage === 0) {
-                        currentPage = pdfDoc.addPage(PAGE_SIZE);
+                    if (currentIdx % tile.countPerPage === 0) {
+                        currentPage = pdfDoc.addPage(tile.pageSize);
                     }
                     
-                    const col = currentIdx % cols;
-                    const row = Math.floor((currentIdx % countPerPage) / cols);
+                    const col = currentIdx % tile.cols;
+                    const row = Math.floor((currentIdx % tile.countPerPage) / tile.cols);
                     
-                    const drawX = MARGIN + col * (maxW_pt + GAP) + (maxW_pt - img_w_pt) / 2;
-                    const drawY_top = MARGIN + row * (maxH_pt + GAP) + (maxH_pt - img_h_pt) / 2;
-                    const drawY = PAGE_SIZE[1] - drawY_top - img_h_pt;
+                    const drawW = img_w_pt * tile.scale, drawH = img_h_pt * tile.scale;
+                    const drawX = tile.margin + col * (tile.cellWidth + tile.gap) + (tile.cellWidth - drawW) / 2;
+                    const drawY_top = tile.margin + row * (tile.cellHeight + tile.gap) + (tile.cellHeight - drawH) / 2;
+                    const drawY = tile.pageSize[1] - drawY_top - drawH;
                     
                     currentPage.drawImage(jpgImage, {
                         x: drawX,
                         y: drawY,
-                        width: img_w_pt,
-                        height: img_h_pt,
+                        width: drawW,
+                        height: drawH,
                     });
                     currentIdx++;
                 }
@@ -1168,33 +1204,13 @@
         try {
             const prefix = prefixInput.value || 'crop';
             const layout = document.getElementById('layout-select').value;
+            const sourcePaper = document.getElementById('source-paper-select').value;
             const targetDpi = parseInt(document.getElementById('dpi-select').value, 10);
             const exportScale = targetDpi / 72;
 
-            const { width: maxW_pt, height: maxH_pt } = await getMaxCropSizeInPoints(targetPages);
+            const { width: maxW_pt, height: maxH_pt } = await getMaxCropSizeInPoints(targetPages, sourcePaper);
 
-            const A4_PORTRAIT = [595.28, 841.89];
-            const A4_LANDSCAPE = [841.89, 595.28];
-            const MARGIN = 20;
-            const GAP = 10;
-            
-            let cols = 1, rows = 1, PAGE_SIZE = null, countPerPage = 1;
-
-            if (layout === 'tile_a4') {
-                const cols_P = Math.max(1, Math.floor((A4_PORTRAIT[0] - MARGIN * 2 + GAP) / (maxW_pt + GAP)));
-                const rows_P = Math.max(1, Math.floor((A4_PORTRAIT[1] - MARGIN * 2 + GAP) / (maxH_pt + GAP)));
-                const count_P = cols_P * rows_P;
-
-                const cols_L = Math.max(1, Math.floor((A4_LANDSCAPE[0] - MARGIN * 2 + GAP) / (maxW_pt + GAP)));
-                const rows_L = Math.max(1, Math.floor((A4_LANDSCAPE[1] - MARGIN * 2 + GAP) / (maxH_pt + GAP)));
-                const count_L = cols_L * rows_L;
-
-                const isLandscape = count_L > count_P;
-                PAGE_SIZE = isLandscape ? A4_LANDSCAPE : A4_PORTRAIT;
-                cols = isLandscape ? cols_L : cols_P;
-                rows = isLandscape ? rows_L : rows_P;
-                countPerPage = cols * rows;
-            }
+            const tile = layout === 'tile_a4' ? getA4TileLayout(maxW_pt, maxH_pt) : null;
 
             let currentIdx = 0;
             let a4PageNum = 1;
@@ -1205,7 +1221,7 @@
                 // UIアニメーションコマ更新用ウェイト
                 await new Promise(resolve => setTimeout(resolve, 10));
 
-                const imgData = await extractPageImageData(pageNum, exportScale);
+                const imgData = await extractPageImageData(pageNum, exportScale, sourcePaper);
                 if (imgData) {
                     if (layout === 'single') {
                         // dataURLをBlob化
@@ -1218,33 +1234,36 @@
                         await writable.write(blob);
                         await writable.close();
                     } else {
-                        if (currentIdx % countPerPage === 0) {
+                        if (currentIdx % tile.countPerPage === 0) {
                             tileCanvas = document.createElement('canvas');
-                            tileCanvas.width = PAGE_SIZE[0] * exportScale;
-                            tileCanvas.height = PAGE_SIZE[1] * exportScale;
+                            tileCanvas.width = tile.pageSize[0] * exportScale;
+                            tileCanvas.height = tile.pageSize[1] * exportScale;
                             tileCtx = tileCanvas.getContext('2d');
                             tileCtx.fillStyle = '#ffffff';
                             tileCtx.fillRect(0, 0, tileCanvas.width, tileCanvas.height);
                         }
                         
-                        const col = currentIdx % cols;
-                        const row = Math.floor((currentIdx % countPerPage) / cols);
+                        const col = currentIdx % tile.cols;
+                        const row = Math.floor((currentIdx % tile.countPerPage) / tile.cols);
                         
                         const img_w_pt = imgData.width / exportScale;
                         const img_h_pt = imgData.height / exportScale;
                         
-                        const x_pt = MARGIN + col * (maxW_pt + GAP) + (maxW_pt - img_w_pt) / 2;
-                        const y_pt = MARGIN + row * (maxH_pt + GAP) + (maxH_pt - img_h_pt) / 2;
+                        const x_pt = tile.margin + col * (tile.cellWidth + tile.gap) + (tile.cellWidth - img_w_pt * tile.scale) / 2;
+                        const y_pt = tile.margin + row * (tile.cellHeight + tile.gap) + (tile.cellHeight - img_h_pt * tile.scale) / 2;
                         
                         const img = new Image();
-                        img.src = imgData.dataUrl;
-                        await new Promise(resolve => { img.onload = resolve; });
+                        await new Promise((resolve, reject) => {
+                            img.onload = resolve;
+                            img.onerror = reject;
+                            img.src = imgData.dataUrl;
+                        });
                         
-                        tileCtx.drawImage(img, x_pt * exportScale, y_pt * exportScale, imgData.width, imgData.height);
+                        tileCtx.drawImage(img, x_pt * exportScale, y_pt * exportScale, imgData.width * tile.scale, imgData.height * tile.scale);
                         
                         currentIdx++;
                         
-                        if (currentIdx % countPerPage === 0) {
+                        if (currentIdx % tile.countPerPage === 0) {
                             const base64 = tileCanvas.toDataURL('image/jpeg', JPEG_QUALITY);
                             const res = await fetch(base64);
                             const blob = await res.blob();

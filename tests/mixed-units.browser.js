@@ -1,6 +1,7 @@
 // Run in the app page with Playwright browser_evaluate.
 // Intercept only download/folder destinations, while exercising real exporters.
 async () => {
+    document.getElementById('source-paper-select').value = 'pdf';
     const saved = { saveAs: window.saveAs, picker: window.showDirectoryPicker, alert: window.alert };
     let pdfBlob;
     const files = [];
