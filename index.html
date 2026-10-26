@@ -1037,16 +1037,12 @@
                 }
             });
 
-            // ピクセル単位の最大枠サイズ (singleレイアウト用)
-            const maxW_px = maxW_pt * exportScale;
-            const maxH_px = maxH_pt * exportScale;
-
             const A4_PORTRAIT = [595.28, 841.89];
             const A4_LANDSCAPE = [841.89, 595.28];
             const MARGIN = 20;
             const GAP = 10;
             
-            let cols = 1, rows = 1, PAGE_SIZE = [maxW_px, maxH_px], countPerPage = 1;
+            let cols = 1, rows = 1, PAGE_SIZE = [maxW_pt, maxH_pt], countPerPage = 1;
 
             if (layout === 'tile_a4') {
                 const cols_P = Math.max(1, Math.floor((A4_PORTRAIT[0] - MARGIN * 2 + GAP) / (maxW_pt + GAP)));
@@ -1076,16 +1072,19 @@
                 if (!imgData) continue;
 
                 const jpgImage = await pdfDoc.embedJpg(imgData.dataUrl);
+                // DPIは画像の解像度にのみ使い、PDF上の寸法は元のポイント単位に戻す。
+                const img_w_pt = imgData.width / exportScale;
+                const img_h_pt = imgData.height / exportScale;
                 
                 if (layout === 'single') {
-                    const page = pdfDoc.addPage([maxW_px, maxH_px]);
-                    const drawX = (maxW_px - imgData.width) / 2;
-                    const drawY = (maxH_px - imgData.height) / 2;
+                    const page = pdfDoc.addPage([maxW_pt, maxH_pt]);
+                    const drawX = (maxW_pt - img_w_pt) / 2;
+                    const drawY = (maxH_pt - img_h_pt) / 2;
                     page.drawImage(jpgImage, {
                         x: drawX,
                         y: drawY,
-                        width: imgData.width,
-                        height: imgData.height,
+                        width: img_w_pt,
+                        height: img_h_pt,
                     });
                 } else {
                     if (currentIdx % countPerPage === 0) {
@@ -1094,9 +1093,6 @@
                     
                     const col = currentIdx % cols;
                     const row = Math.floor((currentIdx % countPerPage) / cols);
-                    
-                    const img_w_pt = imgData.width / exportScale;
-                    const img_h_pt = imgData.height / exportScale;
                     
                     const drawX = MARGIN + col * (maxW_pt + GAP) + (maxW_pt - img_w_pt) / 2;
                     const drawY_top = MARGIN + row * (maxH_pt + GAP) + (maxH_pt - img_h_pt) / 2;
