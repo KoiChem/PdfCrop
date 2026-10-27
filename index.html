@@ -15,7 +15,9 @@
 
         .row { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
         .control-group, .toolbar label { display: inline-flex; gap: 6px; align-items: center; white-space: nowrap; }
-        #file-input { width: 220px; min-width: 0; max-width: 100%; }
+        #source-file-control[hidden] { display: none; }
+        #source-file-control { max-width: 100%; min-width: 0; }
+        #source-file-select { width: 190px; min-width: 0; max-width: 100%; }
         .divider { color: #ccc; user-select: none; }
         .workspace { position: relative; background: #fff; box-shadow: 0 4px 10px rgba(0,0,0,0.1); }
         #pdf-canvas { display: block; }
@@ -203,8 +205,12 @@
             <svg viewBox="0 0 24 24"><path d="M21 7v6h-6"></path><path d="M3 17a9 9 0 019-9 9 9 0 016 2.3l3 2.7"></path></svg>
         </button>
         <span class="divider">|</span>
-        <input type="file" id="file-input" accept="application/pdf" style="font-size: 12px;" title="Ctrl+O でファイルを開く">
+        <button id="btn-open" title="PDFを最大10ファイル・合計100ページまで開く (Ctrl+O)">PDFを開く</button>
+        <input type="file" id="file-input" accept="application/pdf,.pdf" multiple hidden aria-label="PDFファイルを開く">
         <span class="divider">|</span>
+        <label id="source-file-control" hidden>ファイル:
+            <select id="source-file-select" aria-label="元ファイル"></select>
+        </label>
         <label>元用紙:
             <select id="source-paper-select" title="元ページ全体を選んだ用紙サイズとして扱います。PDFの設定どおりではPDF内の寸法を使います。">
                 <option value="a4_portrait" selected>A4縦</option>
@@ -382,7 +388,7 @@
     </div>
 </dialog>
 
-<script src="output.js"></script>
+<script src="output.js?v=20261027-1"></script>
 <script>
     // 状態管理
     const state = {
@@ -617,60 +623,21 @@
         e.preventDefault();
         dragCounter = 0;
         dropZone.style.display = 'none';
-        const file = e.dataTransfer.files[0];
-        if (file && file.type === 'application/pdf') {
-            processFile(file);
-        } else if (file) {
-            alert('PDFファイルを選択してください。');
-        }
+        if (e.dataTransfer.files.length) void processFiles(e.dataTransfer.files);
     });
 
     function handleFileSelect(e) {
-        const file = e.target.files[0];
-        if (!file) return;
-        processFile(file);
+        const files = Array.from(e.target.files);
+        e.target.value = ''; // Allow choosing the same files again.
+        if (files.length) void processFiles(files);
     }
 
-    async function processFile(file) {
-        const previewDialog = document.getElementById('output-preview-dialog');
-        if (previewDialog.open) previewDialog.close();
-        const loadingDiv = document.getElementById('loading');
-        loadingDiv.style.display = 'flex';
-        document.getElementById('progress-container').style.display = 'none';
-        document.querySelector('.loading-text').textContent = 'PDF 読み込み中...';
-
-        const fileReader = new FileReader();
-        fileReader.onload = async function() {
-            try {
-                const typedarray = new Uint8Array(this.result);
-                state.pdfDoc = await pdfjsLib.getDocument(typedarray).promise;
-                state.numPages = state.pdfDoc.numPages;
-                state.pageNum = 1;
-                state.pageScale = 1.0;
-                
-                state.cropBoxes = new Array(state.numPages).fill(null);
-                
-                historyStack = [];
-                historyIndex = -1;
-                saveHistory();
-                
-                document.getElementById('page-total').textContent = state.numPages;
-                renderAndUI();
-                updatePinStyle();
-            } catch (err) {
-                alert('PDFの読み込みに失敗しました。');
-                console.error(err);
-            } finally {
-                loadingDiv.style.display = 'none';
-            }
-        };
-        fileReader.readAsArrayBuffer(file);
-    }
+    function processFile(file) { return processFiles([file]); }
 
 
     function renderAndUI() {
         updateUI();
-        renderPage(state.pageNum);
+        return renderPage(state.pageNum);
     }
 
     function changeZoom(newScale, centerPoint = null) {
@@ -730,27 +697,45 @@
     }
 
     // プレビュー描画
+    let editorRenderRevision = 0, editorRenderTask = null;
+
+    async function stopEditorRender() {
+        editorRenderRevision++;
+        const task = editorRenderTask;
+        editorRenderTask = null;
+        if (task) { task.cancel(); await task.promise.catch(() => {}); }
+    }
+
     async function renderPage(num) {
-        const page = await state.pdfDoc.getPage(num);
-        const viewport = page.getViewport({ scale: state.pageScale });
-
-        canvas.width = viewport.width;
-        canvas.height = viewport.height;
-        workspace.style.width = viewport.width + 'px';
-        workspace.style.height = viewport.height + 'px';
-
-        const renderContext = {
-            canvasContext: ctx,
-            viewport: viewport
-        };
-        await page.render(renderContext).promise;
-
-        pageInput.value = num;
-        drawCropBox(num);
+        const revision = ++editorRenderRevision, doc = state.pdfDoc;
+        const previous = editorRenderTask;
+        if (previous) { previous.cancel(); await previous.promise.catch(() => {}); }
+        if (!doc || revision !== editorRenderRevision) return;
+        let task;
+        try {
+            const page = await doc.getPage(num);
+            if (revision !== editorRenderRevision || state.pdfDoc !== doc) return;
+            const viewport = page.getViewport({ scale: state.pageScale });
+            canvas.width = viewport.width; canvas.height = viewport.height;
+            workspace.style.width = viewport.width + 'px'; workspace.style.height = viewport.height + 'px';
+            task = page.render({ canvasContext: ctx, viewport });
+            editorRenderTask = task;
+            await task.promise;
+            if (revision !== editorRenderRevision) return;
+            pageInput.value = num;
+            drawCropBox(num);
+        } catch (error) {
+            if (revision === editorRenderRevision && error.name !== 'RenderingCancelledException') {
+                console.error(error); alert('ページを表示できません。もう一度ページを選んでください。');
+            }
+        } finally {
+            if (editorRenderTask === task) editorRenderTask = null;
+        }
     }
 
     function updateUI() {
         const hasDoc = state.pdfDoc !== null;
+        syncSourceFileControl();
         document.getElementById('btn-first').disabled = !hasDoc || state.pageNum <= 1;
         document.getElementById('btn-prev').disabled = !hasDoc || state.pageNum <= 1;
         document.getElementById('btn-next').disabled = !hasDoc || state.pageNum >= state.numPages;
@@ -989,32 +974,9 @@
     }
 
     // --- 一括適用 ---
-    function copyBoxToAll() {
-        const currentBox = state.cropBoxes[state.pageNum - 1];
-        if (!currentBox) return alert('現在のページに枠がありません。');
-        for (let i = state.pageNum; i < state.numPages; i++) {
-            state.cropBoxes[i] = { ...currentBox };
-        }
-        saveHistory();
-        alert(`ページ ${state.pageNum + 1} 以降に枠をコピーしました。`);
-    }
+    function copyBoxToAll() { return copyBoxToFollowing(false); }
 
-    function copyBoxToOddEven() {
-        const currentBox = state.cropBoxes[state.pageNum - 1];
-        if (!currentBox) return alert('現在のページに枠がありません。');
-        const isCurrentOdd = (state.pageNum % 2 !== 0);
-        let count = 0;
-        for (let i = state.pageNum; i < state.numPages; i++) {
-            const pageNum = i + 1;
-            const isTargetOdd = (pageNum % 2 !== 0);
-            if (isCurrentOdd === isTargetOdd) {
-                state.cropBoxes[i] = { ...currentBox };
-                count++;
-            }
-        }
-        saveHistory();
-        alert(`以降の${isCurrentOdd ? '奇数' : '偶数'}ページ (${count}件) に枠をコピーしました。`);
-    }
+    function copyBoxToOddEven() { return copyBoxToFollowing(true); }
 
     // 対象ページの取得（全ページ or 現ページ）
     function getTargetPageNumbers() {
@@ -1029,6 +991,7 @@
     }
 
 </script>
-<script src="preview.js"></script>
+<script src="documents.js?v=20261027-1"></script>
+<script src="preview.js?v=20261027-1"></script>
 </body>
 </html>

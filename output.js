@@ -83,8 +83,18 @@ async function extractPageImageData(frame, exportScale, pdfDoc) {
     return { dataUrl, width:frame.width*exportScale, height:frame.height*exportScale };
 }
 
+// The visual overlay must also block native keyboard activation of toolbar controls.
+function setAppBusy(busy) {
+    // Inert can leave the previously focused button active until the next paint.
+    const active=document.activeElement;
+    if (busy && (toolbar.contains(active) || workspace.contains(active))) active.blur();
+    toolbar.inert=busy;
+    workspace.inert=busy;
+    loading.style.display=busy ? 'flex' : 'none';
+}
+
 function startOutputProgress(label, total) {
-    loading.style.display='flex';
+    setAppBusy(true);
     document.querySelector('.loading-text').textContent=label;
     document.getElementById('progress-container').style.display='block';
     document.getElementById('export-progress').max=total;
@@ -123,7 +133,7 @@ async function exportPDF(planOrEvent) {
     } catch (error) {
         console.error(error); alert('PDF生成中にエラーが発生しました。');
     } finally {
-        loading.style.display='none';
+        setAppBusy(false);
     }
 }
 
@@ -164,6 +174,6 @@ async function exportJPGs(planOrEvent) {
     } catch (error) {
         console.error(error); alert('JPG保存中にエラーが発生しました。');
     } finally {
-        loading.style.display='none';
+        setAppBusy(false);
     }
 }
