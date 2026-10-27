@@ -105,20 +105,22 @@ async function processFiles(fileList) {
     }
 }
 
-async function copyBoxToFollowing(oddEven) {
+async function copyBoxToPages() {
     const doc=state.pdfDoc, currentPage=state.pageNum, currentBox=state.cropBoxes[currentPage-1];
     if (!currentBox) return alert('現在のページに枠がありません。');
     if (documentLoadInProgress || loading.style.display==='flex') return;
     const zoom=state.pageScale, paper=document.getElementById('source-paper-select').value;
-    startOutputProgress('枠をコピー中…',state.numPages-currentPage);
+    const duplex=document.getElementById('page-sides-select').value==='duplex';
+    startOutputProgress('枠をコピー中…',state.numPages-1);
     try {
         const sourcePage=await doc.getPage(currentPage), scale=getPagePointScale(sourcePage,paper);
         const physical={x:currentBox.x/zoom*scale.x,y:currentBox.y/zoom*scale.y,
             w:currentBox.w/zoom*scale.x,h:currentBox.h/zoom*scale.y};
         const parity=getSourcePageInfo(doc,currentPage).localPageNum%2;
         const updates=[],skipped=[];
-        for(let n=currentPage+1;n<=state.numPages;n++) {
-            if(oddEven && getSourcePageInfo(doc,n).localPageNum%2!==parity)continue;
+        for(let n=1;n<=state.numPages;n++) {
+            if(n===currentPage)continue;
+            if(duplex && getSourcePageInfo(doc,n).localPageNum%2!==parity)continue;
             const page=await doc.getPage(n), s=getPagePointScale(page,paper), viewport=page.getViewport({scale:1});
             const box={x:physical.x/s.x,y:physical.y/s.y,w:physical.w/s.x,h:physical.h/s.y};
             if(box.x<-.001||box.y<-.001||box.x+box.w>viewport.width+.001||box.y+box.h>viewport.height+.001)skipped.push(n);

@@ -241,8 +241,13 @@
         </button>
     </div>
     <div class="row">
-        <button id="btn-copy-all" disabled>以降全枠コピー</button>
-        <button id="btn-copy-odd-even" disabled>奇偶枠コピー</button>
+        <label>ページ構成:
+            <select id="page-sides-select">
+                <option value="simplex" selected>片面1ページ</option>
+                <option value="duplex">両面</option>
+            </select>
+        </label>
+        <button id="btn-copy-all" disabled>全ページに枠コピー</button>
         <span class="divider">|</span>
         <label>出力DPI:
             <select id="dpi-select">
@@ -349,8 +354,7 @@
     <div id="crop-overlay">
         <!-- 枠近傍のアクションボタン -->
         <div id="box-actions">
-            <button id="btn-box-copy-all">全コピー</button>
-            <button id="btn-box-copy-odd-even">偶奇コピー</button>
+            <button id="btn-box-copy-all">全ページに枠コピー</button>
         </div>
         <div id="resize-handle"></div>
     </div>
@@ -465,7 +469,6 @@
     document.getElementById('btn-zoom-in').addEventListener('click', () => changeZoom(state.pageScale + 0.2));
 
     document.getElementById('btn-copy-all').addEventListener('click', copyBoxToAll);
-    document.getElementById('btn-copy-odd-even').addEventListener('click', copyBoxToOddEven);
     document.getElementById('btn-export-pdf').addEventListener('click', exportPDF);
     document.getElementById('btn-export-jpg').addEventListener('click', exportJPGs);
 
@@ -473,10 +476,6 @@
     document.getElementById('btn-box-copy-all').addEventListener('click', (e) => {
         e.stopPropagation();
         copyBoxToAll();
-    });
-    document.getElementById('btn-box-copy-odd-even').addEventListener('click', (e) => {
-        e.stopPropagation();
-        copyBoxToOddEven();
     });
     // mousedownが伝播して新規枠描画になるのを防ぐ
     boxActions.addEventListener('mousedown', (e) => e.stopPropagation());
@@ -746,7 +745,6 @@
         document.getElementById('btn-zoom-in').disabled = !hasDoc;
 
         document.getElementById('btn-copy-all').disabled = !hasDoc;
-        document.getElementById('btn-copy-odd-even').disabled = !hasDoc;
         document.getElementById('btn-preview').disabled = !hasDoc;
         document.getElementById('btn-export-pdf').disabled = !hasDoc;
         document.getElementById('btn-export-jpg').disabled = !hasDoc;
@@ -973,10 +971,8 @@
         drawCropBox(state.pageNum);
     }
 
-    // --- 一括適用 ---
-    function copyBoxToAll() { return copyBoxToFollowing(false); }
-
-    function copyBoxToOddEven() { return copyBoxToFollowing(true); }
+    // Keep the handler available before documents.js is loaded.
+    function copyBoxToAll() { return copyBoxToPages(); }
 
     // 対象ページの取得（全ページ or 現ページ）
     function getTargetPageNumbers() {
@@ -991,7 +987,7 @@
     }
 
 </script>
-<script src="documents.js?v=20261027-1"></script>
+<script src="documents.js?v=20261027-2"></script>
 <script src="preview.js?v=20261027-1"></script>
 </body>
 </html>

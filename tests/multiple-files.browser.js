@@ -59,13 +59,15 @@ async () => {
         await busyCopy;
         checks.push('physical frame copy and Undo Redo');
         state.cropBoxes=[{x:30,y:42,w:300,h:84},null,null,null,null,null];
-        state.pageNum=1;await copyBoxToOddEven();
+        document.getElementById('page-sides-select').value='duplex';
+        state.pageNum=1;await copyBoxToAll();
         eq('first page of second file remains odd',state.cropBoxes[1]?.w,600);
         eq('second page of second file skipped',state.cropBoxes[2],null);
         eq('third page of second file odd',state.cropBoxes[3]?.w,600);
         eq('third file local odd',state.cropBoxes[4]?.w,300);
         eq('third file local even',state.cropBoxes[5],null);
-        checks.push('file-relative odd even');
+        checks.push('file-relative duplex sides');
+        document.getElementById('page-sides-select').value='simplex';
         const selector=document.getElementById('source-file-select');
         selector.value='1';selector.dispatchEvent(new Event('change'));
         await new Promise(r=>setTimeout(r,100));
