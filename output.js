@@ -85,6 +85,7 @@ async function extractPageImageData(frame, exportScale, pdfDoc) {
 
 // The visual overlay must also block native keyboard activation of toolbar controls.
 function setAppBusy(busy) {
+    if (busy && outputSettings.open) outputSettings.close();
     // Inert can leave the previously focused button active until the next paint.
     const active=document.activeElement;
     if (busy && (toolbar.contains(active) || workspace.contains(active))) active.blur();
