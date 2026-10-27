@@ -48,7 +48,6 @@ async () => {
         updateUI();
         document.getElementById('source-paper-select').value='pdf';
         document.getElementById('layout-select').value='tile_a4';
-        document.getElementById('dpi-select').value='144';
         let renders=0,maxPixels=0;
         for(let i=1;i<=35;i++) {
             const p=await state.pdfDoc.getPage(i), render=p.render.bind(p);
@@ -95,11 +94,10 @@ async () => {
         await exportJPGs(plan);
         check('saved JPG page count matches preview',jpgs.length,4);
         const bitmap=await createImageBitmap(jpgs[0]);
-        check('saved JPG landscape width',bitmap.width,1684);check('saved JPG landscape height',bitmap.height,1191);bitmap.close();
+        check('saved JPG landscape width',bitmap.width,3508);check('saved JPG landscape height',bitmap.height,2480);bitmap.close();
         const before=renders;
-        document.getElementById('dpi-select').value='300';
         await showOutputPreviewPage(0);
-        check('DPI change reuses low resolution crops',renders,before);
+        check('preview reuses cached crops',renders,before);
         await showOutputPreviewPage(3);
         check('last sheet item count',outputPreview.plan.frames.slice(30).length,5);
         check('last sheet preview rows',marks(canvas),3);
@@ -107,16 +105,15 @@ async () => {
         dialog.close();
         state.numPages=2;state.cropBoxes=[{x:20,y:20,w:350,h:90},{x:20,y:20,w:100,h:50}];
         document.getElementById('layout-select').value='single';
-        document.getElementById('dpi-select').value='144';
         const single=await buildOutputPlan();
         await exportPDF(single);const singlePdf=await PDFLib.PDFDocument.load(await saved.arrayBuffer());
         check('single PDF padding width',singlePdf.getPage(1).getWidth(),350);
         jpgs.length=0;await exportJPGs(single);
-        const small=await createImageBitmap(jpgs[1]);check('single JPG padding width',small.width,700);check('single JPG padding height',small.height,180);small.close();
+        const small=await createImageBitmap(jpgs[1]);check('single JPG padding width',small.width,1458);check('single JPG padding height',small.height,375);small.close();
     } finally {
         document.getElementById('output-preview-dialog').close();
         window.saveAs=original.saveAs;window.showDirectoryPicker=original.picker;window.alert=original.alert;
     }
     if(errors.length)throw new Error(errors.join('\n'));
-    return {passed:13,checks:'fixed directions, preview pixels, lazy/cached raster, rapid switches, close/focus, shortcut isolation, output parity, DPI independence, last page, mixed single padding'};
+    return {passed:13,checks:'fixed directions, preview pixels, lazy/cached raster, rapid switches, close/focus, shortcut isolation, output parity, fixed DPI, last page, mixed single padding'};
 }

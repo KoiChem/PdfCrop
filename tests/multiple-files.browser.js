@@ -102,7 +102,7 @@ async () => {
         const loadMs=Math.round(performance.now()-begin);
         eq('100 continuous pages',state.numPages,100);eq('last source number',getSourcePageInfo(state.pdfDoc,100).localPageNum,10);
         state.cropBoxes[0]={x:30,y:42,w:300,h:84};await copyBoxToAll();
-        state.exportScope='all';document.getElementById('layout-select').value='tile_a4';document.getElementById('dpi-select').value='144';
+        state.exportScope='all';document.getElementById('layout-select').value='tile_a4';
         await openOutputPreview();eq('preview includes all 100 frames',outputPreview.plan.frames.length,100);
         eq('portrait output count',outputPreview.plan.pageCount,13);
         const exportPlan=outputPreview.plan;outputPreview.dialog.close();

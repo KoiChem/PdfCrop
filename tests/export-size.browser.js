@@ -59,13 +59,12 @@ async () => {
                 x: 40, y: 180, width: 72, height: 72, color: PDFLib.rgb(0, 0, 0)
             });
             const bytes = await source.save();
-            for (const dpi of ['144', '300']) {
+            for (const dpi of ['300']) {
                 for (const zoom of [0.5, 2]) {
                     state.pdfDoc = await pdfjsLib.getDocument({ data: bytes.slice() }).promise;
                     state.numPages = 1; state.pageNum = 1; state.exportScope = 'all';
                     state.pageScale = zoom;
                     state.cropBoxes = [{ x: 20 * zoom, y: 20 * zoom, w: 180 * zoom, h: 144 * zoom }];
-                    document.getElementById('dpi-select').value = dpi;
                     const label = `UserUnit ${fixture.unit} / ${dpi} DPI / zoom ${zoom}`;
 
                     const raster = await extractPageImageData((await buildOutputPlan()).frames[0], Number(dpi) / 72, state.pdfDoc);

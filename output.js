@@ -1,3 +1,5 @@
+const EXPORT_SCALE = 300 / 72;
+
 // Physical geometry shared by preview, PDF and JPG. Coordinates use top-left origins.
 function getPagePointScale(page, sourcePaper = document.getElementById('source-paper-select').value) {
     const paper = SOURCE_PAPER_MM[sourcePaper];
@@ -85,7 +87,6 @@ async function extractPageImageData(frame, exportScale, pdfDoc) {
 
 // The visual overlay must also block native keyboard activation of toolbar controls.
 function setAppBusy(busy) {
-    if (busy && outputSettings.open) outputSettings.close();
     // Inert can leave the previously focused button active until the next paint.
     const active=document.activeElement;
     if (busy && (toolbar.contains(active) || workspace.contains(active))) active.blur();
@@ -112,7 +113,7 @@ async function exportPDF(planOrEvent) {
     const provided=planOrEvent && Array.isArray(planOrEvent.frames) ? planOrEvent : null;
     const settings=provided || captureOutputSettings();
     if (!settings.frames.length) return alert('対象ページに抽出枠が設定されていません。');
-    const exportScale=Number(document.getElementById('dpi-select').value)/72;
+    const exportScale=EXPORT_SCALE;
     startOutputProgress('PDF 書き出し中...',settings.frames.length);
     try {
         const plan=provided || await buildOutputPlan(settings);
@@ -143,7 +144,7 @@ async function exportJPGs(planOrEvent) {
     const settings=provided || captureOutputSettings();
     if (!settings.frames.length) return alert('対象ページに抽出枠が設定されていません。');
     if (!window.showDirectoryPicker) return alert('お使いのブラウザは直接保存(File System Access API)に対応していません。ChromeまたはEdgeをご利用ください。');
-    const exportScale=Number(document.getElementById('dpi-select').value)/72;
+    const exportScale=EXPORT_SCALE;
     let dir;
     try { dir=await window.showDirectoryPicker({mode:'readwrite'}); }
     catch (error) { if(error.name!=='AbortError')console.error(error); return; }

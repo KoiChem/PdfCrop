@@ -82,23 +82,23 @@ async () => {
                 { value: 'a3_landscape', width: 595.275591, height: 420.944882 },
                 { value: 'b4_landscape', width: 515.905512, height: 364.251969 }
             ]) {
-                for (const dpi of ['144', '300']) for (const zoom of [0.5, 2]) {
+                for (const dpi of ['300']) for (const zoom of [0.5, 2]) {
                     await source([1260, 1660], {}, 1, 2, 90, true);
                     state.pageScale = zoom;
                     // Rotated visible page is 1600 x 1200; select its central half.
                     state.cropBoxes = [{ x: 400*zoom, y: 300*zoom, w: 800*zoom, h: 600*zoom }];
-                    paper.value = f.value; document.getElementById('dpi-select').value = dpi;
+                    paper.value = f.value;
                     const out = await pdf('single');
                     check(`${f.value} width`, out.getPage(0).getWidth(), f.width);
                     check(`${f.value} height`, out.getPage(0).getHeight(), f.height);
                     const image = rectangles(out, out.getPage(0))[0];
                     check('image width', image.width, f.width); check('image height', image.height, f.height);
                     check('frame stays unchanged', state.cropBoxes[0].w, 800*zoom);
-                    if (dpi === '144' && zoom === 0.5) {
+                    if (dpi === '300' && zoom === 0.5) {
                         files.length = 0; await exportJPGs();
                         const bitmap = await createImageBitmap(files[0].blob);
-                        check('JPG normalized width', bitmap.width, f.width*2, 1);
-                        check('JPG normalized height', bitmap.height, f.height*2, 1);
+                        check('JPG normalized width', bitmap.width, f.width*300/72, 1);
+                        check('JPG normalized height', bitmap.height, f.height*300/72, 1);
                         const frame = await pixels(bitmap), mark = await pixels(bitmap, true);
                         check('frame left', frame.left, 0, 1); check('frame top', frame.top, 0, 1);
                         check('frame right', frame.right, bitmap.width-1, 1); check('frame bottom', frame.bottom, bitmap.height-1, 1);
@@ -111,7 +111,6 @@ async () => {
             }
         }
         if (paper) paper.value = 'pdf';
-        document.getElementById('dpi-select').value = '144';
         for (const f of [
             { paper: 'a4_portrait', size: [1190.5511811023623, 1683.7795275590552], box: { x: 20, y: 20, w: 798, h: 139 }, count: 35, pages: 4, landscape: false, shrink: false, width: 399, height: 69.5 },
             { size: [850, 200], box: { x: 20, y: 20, w: 798, h: 139 }, count: 35, pages: 12, landscape: true, shrink: false },

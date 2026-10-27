@@ -180,14 +180,6 @@
             color: #444;
             letter-spacing: 1.5px;
         }
-        #output-settings { width: min(340px, calc(100vw - 48px)); box-sizing: border-box; padding: 20px; border: 0; border-radius: 10px; box-shadow: 0 16px 60px #0005; }
-        #output-settings::backdrop { background: #0007; }
-        #output-settings h2 { margin: 0 0 18px; font-size: 17px; }
-        #output-settings .settings-fields { display: grid; gap: 14px; }
-        #output-settings label { display: grid; gap: 5px; }
-        #output-settings input, #output-settings select { width: 100%; min-height: 34px; box-sizing: border-box; }
-        #output-settings .settings-footer { display: flex; justify-content: flex-end; margin-top: 20px; }
-        #output-settings .settings-footer button { min-height: 34px; }
         #output-preview-dialog { width: min(960px, calc(100vw - 24px)); height: min(900px, calc(100dvh - 24px)); max-width: none; max-height: none; padding: 0; border: 0; border-radius: 10px; box-shadow: 0 16px 60px #0005; }
         #output-preview-dialog[open] { display: flex; flex-direction: column; }
         #output-preview-dialog::backdrop { background: #0007; }
@@ -280,7 +272,7 @@
                 <option value="tile_a4_landscape">A4タイル・横</option>
             </select>
         </label>
-        <button id="btn-output-settings" aria-haspopup="dialog" aria-controls="output-settings">出力設定</button>
+        <label>保存名: <input type="text" id="prefix-input" value="crop" style="width: 100px;"></label>
         <div class="export-actions">
             <button id="btn-preview" disabled>プレビュー</button>
             <button id="btn-export-pdf" class="export-btn" disabled>PDF保存</button>
@@ -372,20 +364,6 @@
     </div>
 </div>
 
-<dialog id="output-settings" aria-labelledby="output-settings-title">
-    <h2 id="output-settings-title">出力設定</h2>
-    <div class="settings-fields">
-        <label>出力DPI
-            <select id="dpi-select">
-                <option value="144">144 (軽量)</option>
-                <option value="300" selected>300 (標準)</option>
-            </select>
-        </label>
-        <label>保存名 <input type="text" id="prefix-input" value="crop"></label>
-    </div>
-    <div class="settings-footer"><button id="output-settings-close">閉じる</button></div>
-</dialog>
-
 <dialog id="output-preview-dialog" aria-labelledby="preview-title">
     <div class="preview-header">
         <h2 id="preview-title">出力プレビュー</h2>
@@ -418,7 +396,7 @@
     </div>
 </dialog>
 
-<script src="output.js?v=20261027-2"></script>
+<script src="output.js?v=20261027-3"></script>
 <script>
     // 状態管理
     const state = {
@@ -496,9 +474,6 @@
 
     document.getElementById('btn-copy-all').addEventListener('click', copyBoxToAll);
     document.getElementById('page-sides-select').addEventListener('change', updateCopyButtonLabels);
-    const outputSettings = document.getElementById('output-settings');
-    document.getElementById('btn-output-settings').addEventListener('click', () => outputSettings.showModal());
-    document.getElementById('output-settings-close').addEventListener('click', () => outputSettings.close());
     document.getElementById('btn-export-pdf').addEventListener('click', exportPDF);
     document.getElementById('btn-export-jpg').addEventListener('click', exportJPGs);
 
@@ -931,13 +906,16 @@
 
     // キーボードショートカット & 微調整
     window.addEventListener('keydown', (e) => {
-        if (outputSettings.open || document.getElementById('output-preview-dialog').open || loading.style.display === 'flex') return;
+        if (document.getElementById('output-preview-dialog').open || loading.style.display === 'flex') return;
         // Ctrl/Cmd + O (ファイルを開く)
         if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'o') {
             e.preventDefault();
             document.getElementById('file-input').click();
             return;
         }
+
+        // Text fields keep their native editing shortcuts.
+        if (e.target.closest('input,select,textarea,[contenteditable]')) return;
 
         // Undo / Redo ショートカット
         if (e.ctrlKey || e.metaKey) {
@@ -953,7 +931,6 @@
             }
         }
 
-        if (e.target.closest('input,select,textarea,[contenteditable]')) return;
         const box = state.cropBoxes[state.pageNum - 1];
         if (!box) return;
         

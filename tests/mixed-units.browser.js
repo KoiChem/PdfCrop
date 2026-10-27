@@ -58,7 +58,6 @@ async () => {
         state.pdfDoc = await pdfjsLib.getDocument({ data: await source.save() }).promise;
         state.numPages = 3; state.pageNum = 1; state.pageScale = 1; state.exportScope = 'all';
         state.cropBoxes = [{ x: 20, y: 20, w: 180, h: 144 }, { x: 20, y: 20, w: 180, h: 144 }, null];
-        document.getElementById('dpi-select').value = '144';
         const single = await exportPdf('single');
         check('single page count (skip unset crop)', single.getPageCount(), 2);
         for (const p of single.getPages()) { check('max width', p.getWidth(), 360); check('max height', p.getHeight(), 288); }
@@ -84,15 +83,15 @@ async () => {
             await exportJPGs();
             check(`${layout} JPG file count`, files.length, layout === 'single' ? 2 : 1);
             if (layout === 'single') {
-                for (const [i, want] of [[0, [720, 576]], [1, [720, 576]]]) {
+                for (const [i, want] of [[0, [1500, 1200]], [1, [1500, 1200]]]) {
                     const im = await readImage(files[i].blob);
                     check('JPG crop width', im.width, want[0]); check('JPG crop height', im.height, want[1]);
                 }
             } else {
                 const im = await readImage(files[0].blob);
-                check('A4 JPG width', im.width, 1191); check('A4 JPG height', im.height, 1684);
+                check('A4 JPG width', im.width, 2480); check('A4 JPG height', im.height, 3508);
                 check('A4 JPG mark count', im.marks.length, 2);
-                for (const [i, want] of [[0, 108], [1, 288]]) {
+                for (const [i, want] of [[0, 225], [1, 600]]) {
                     check('A4 JPG mark width', im.marks[i][0], want, 1);
                     check('A4 JPG mark height', im.marks[i][1], want, 1);
                 }
