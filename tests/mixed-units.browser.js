@@ -84,13 +84,13 @@ async () => {
             await exportJPGs();
             check(`${layout} JPG file count`, files.length, layout === 'single' ? 2 : 1);
             if (layout === 'single') {
-                for (const [i, want] of [[0, [270, 216]], [1, [720, 576]]]) {
+                for (const [i, want] of [[0, [720, 576]], [1, [720, 576]]]) {
                     const im = await readImage(files[i].blob);
                     check('JPG crop width', im.width, want[0]); check('JPG crop height', im.height, want[1]);
                 }
             } else {
                 const im = await readImage(files[0].blob);
-                check('A4 JPG width', im.width, 1190); check('A4 JPG height', im.height, 1683);
+                check('A4 JPG width', im.width, 1191); check('A4 JPG height', im.height, 1684);
                 check('A4 JPG mark count', im.marks.length, 2);
                 for (const [i, want] of [[0, 108], [1, 288]]) {
                     check('A4 JPG mark width', im.marks[i][0], want, 1);

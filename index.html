@@ -172,6 +172,19 @@
             color: #444;
             letter-spacing: 1.5px;
         }
+        #output-preview-dialog { width: min(960px, calc(100vw - 24px)); height: min(900px, calc(100dvh - 24px)); max-width: none; max-height: none; padding: 0; border: 0; border-radius: 10px; box-shadow: 0 16px 60px #0005; }
+        #output-preview-dialog[open] { display: flex; flex-direction: column; }
+        #output-preview-dialog::backdrop { background: #0007; }
+        .preview-header, .preview-controls, .preview-footer { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; padding: 12px 16px; }
+        .preview-header { justify-content: space-between; border-bottom: 1px solid #ddd; }
+        .preview-header h2 { margin: 0; font-size: 17px; }
+        .preview-controls label { display: inline-flex; align-items: center; gap: 6px; white-space: nowrap; }
+        #preview-summary { margin: 0; color: #374151; }
+        #preview-stage { flex: 1; min-height: 0; display: flex; align-items: center; justify-content: center; padding: 12px; background: #e9edf2; overflow: hidden; }
+        #preview-canvas { display: block; max-width: 100%; max-height: 100%; width: auto; height: auto; background: white; box-shadow: 0 2px 12px #0003; }
+        #preview-status { min-height: 1.2em; margin: 0; padding: 4px 16px; font-size: 12px; color: #475569; }
+        .preview-footer { justify-content: space-between; border-top: 1px solid #ddd; }
+        #output-preview-dialog button { min-height: 32px; }
     </style>
     <!-- ライブラリ読み込み -->
     <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
@@ -240,12 +253,14 @@
         <label>レイアウト:
             <select id="layout-select">
                 <option value="single" selected>1枠1枚</option>
-                <option value="tile_a4">A4タイル</option>
+                <option value="tile_a4">A4タイル・縦</option>
+                <option value="tile_a4_landscape">A4タイル・横</option>
             </select>
         </label>
         <span class="divider">|</span>
         <label>保存名: <input type="text" id="prefix-input" value="crop" style="width: 80px;"></label>
         <span class="divider">|</span>
+        <button id="btn-preview" disabled>プレビュー</button>
         <button id="btn-export-pdf" class="export-btn" disabled>PDF</button>
         <button id="btn-export-jpg" class="export-btn" disabled>JPG</button>
     </div>
@@ -335,6 +350,39 @@
     </div>
 </div>
 
+<dialog id="output-preview-dialog" aria-labelledby="preview-title">
+    <div class="preview-header">
+        <h2 id="preview-title">出力プレビュー</h2>
+        <button id="preview-close" autofocus>閉じる</button>
+    </div>
+    <div class="preview-controls">
+        <label>レイアウト:
+            <select id="preview-layout-select">
+                <option value="single">1枠1枚</option>
+                <option value="tile_a4">A4タイル・縦</option>
+                <option value="tile_a4_landscape">A4タイル・横</option>
+            </select>
+        </label>
+        <p id="preview-summary" aria-live="polite"></p>
+    </div>
+    <div id="preview-stage" aria-busy="false">
+        <canvas id="preview-canvas" aria-label="出力ページの配置"></canvas>
+    </div>
+    <p id="preview-status" role="status"></p>
+    <div class="preview-footer">
+        <div class="control-group">
+            <button id="preview-prev">前へ</button>
+            <output id="preview-pagination" aria-live="polite">0 / 0</output>
+            <button id="preview-next">次へ</button>
+        </div>
+        <div class="control-group">
+            <button id="preview-save-pdf" class="export-btn">PDF保存</button>
+            <button id="preview-save-jpg" class="export-btn">JPG保存</button>
+        </div>
+    </div>
+</dialog>
+
+<script src="output.js"></script>
 <script>
     // 状態管理
     const state = {
@@ -584,6 +632,8 @@
     }
 
     async function processFile(file) {
+        const previewDialog = document.getElementById('output-preview-dialog');
+        if (previewDialog.open) previewDialog.close();
         const loadingDiv = document.getElementById('loading');
         loadingDiv.style.display = 'flex';
         document.getElementById('progress-container').style.display = 'none';
@@ -712,6 +762,7 @@
 
         document.getElementById('btn-copy-all').disabled = !hasDoc;
         document.getElementById('btn-copy-odd-even').disabled = !hasDoc;
+        document.getElementById('btn-preview').disabled = !hasDoc;
         document.getElementById('btn-export-pdf').disabled = !hasDoc;
         document.getElementById('btn-export-jpg').disabled = !hasDoc;
         btnScopeAll.disabled = !hasDoc;
@@ -854,6 +905,7 @@
 
     // キーボードショートカット & 微調整
     window.addEventListener('keydown', (e) => {
+        if (document.getElementById('output-preview-dialog').open || loading.style.display === 'flex') return;
         // Ctrl/Cmd + O (ファイルを開く)
         if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'o') {
             e.preventDefault();
@@ -875,6 +927,7 @@
             }
         }
 
+        if (e.target.closest('input,select,textarea,[contenteditable]')) return;
         const box = state.cropBoxes[state.pageNum - 1];
         if (!box) return;
         
@@ -975,341 +1028,7 @@
         return pages;
     }
 
-    // プレビューのページ全体を、選択した元用紙の実寸へ対応させる。
-    function getPagePointScale(page, sourcePaper = document.getElementById('source-paper-select').value) {
-        const paper = SOURCE_PAPER_MM[sourcePaper];
-        if (!paper) return { x: page.userUnit, y: page.userUnit };
-        const viewport = page.getViewport({ scale: 1 });
-        return { x: paper[0] * 72 / 25.4 / viewport.width,
-            y: paper[1] * 72 / 25.4 / viewport.height };
-    }
-
-    // プレビュー座標はPDF.jsのユーザー空間単位。出力時はページごとの実寸(pt)へ変換する。
-    async function getMaxCropSizeInPoints(targetPages, sourcePaper = document.getElementById('source-paper-select').value) {
-        let width = 0, height = 0;
-        for (const pageNum of targetPages) {
-            const box = state.cropBoxes[pageNum - 1];
-            if (!box) continue;
-            const page = await state.pdfDoc.getPage(pageNum);
-            const scale = getPagePointScale(page, sourcePaper);
-            width = Math.max(width, box.w * scale.x / state.pageScale);
-            height = Math.max(height, box.h * scale.y / state.pageScale);
-        }
-        return { width, height };
-    }
-
-    function getA4TileLayout(width, height) {
-        if (!(width > 0 && height > 0)) throw new Error('切り出し枠の大きさを確認してください。');
-        const margin = 20, gap = 10;
-        const candidates = [[595.28, 841.89], [841.89, 595.28]].map(pageSize => {
-            const availableW = pageSize[0] - margin * 2;
-            const availableH = pageSize[1] - margin * 2;
-            const cols = Math.floor((availableW + gap) / (width + gap) + 1e-9);
-            const rows = Math.floor((availableH + gap) / (height + gap) + 1e-9);
-            return { pageSize, cols, rows, countPerPage: cols * rows,
-                fits: cols > 0 && rows > 0,
-                scale: Math.min(1, availableW / width, availableH / height) };
-        });
-        const fitting = candidates.filter(c => c.fits);
-        const chosen = fitting.length
-            ? fitting.reduce((best, c) => c.countPerPage > best.countPerPage ? c : best)
-            : candidates.reduce((best, c) => c.scale > best.scale ? c : best);
-        const scale = fitting.length ? 1 : chosen.scale;
-        const cellWidth = width * scale, cellHeight = height * scale;
-        const cols = Math.floor((chosen.pageSize[0] - margin * 2 + gap) / (cellWidth + gap) + 1e-9);
-        const rows = Math.floor((chosen.pageSize[1] - margin * 2 + gap) / (cellHeight + gap) + 1e-9);
-        return { pageSize: chosen.pageSize, cols, rows, countPerPage: cols * rows,
-            scale, cellWidth, cellHeight, margin, gap };
-    }
-
-    // --- 高解像度レンダリング＆切り出し（共通ロジック） ---
-    async function extractPageImageData(pageNum, exportScale, sourcePaper = document.getElementById('source-paper-select').value) {
-        const box = state.cropBoxes[pageNum - 1];
-        if (!box) return null;
-
-        const page = await state.pdfDoc.getPage(pageNum);
-        const pointScale = getPagePointScale(page, sourcePaper);
-        const viewport = page.getViewport({ scale: exportScale });
-        
-        // メモリ確保のためのテンポラリCanvas
-        const tempCanvas = document.createElement('canvas');
-        tempCanvas.width = Math.ceil(viewport.width * pointScale.x);
-        tempCanvas.height = Math.ceil(viewport.height * pointScale.y);
-        const tempCtx = tempCanvas.getContext('2d');
-
-        await page.render({ canvasContext: tempCtx, viewport,
-            transform: [pointScale.x, 0, 0, pointScale.y, 0, 0] }).promise;
-
-        // クロップ座標をスケールに合わせて変換
-        const scaleX = exportScale * pointScale.x / state.pageScale;
-        const scaleY = exportScale * pointScale.y / state.pageScale;
-        const targetX = box.x * scaleX;
-        const targetY = box.y * scaleY;
-        const targetW = box.w * scaleX;
-        const targetH = box.h * scaleY;
-
-        // 切り抜き用Canvas
-        const cropCanvas = document.createElement('canvas');
-        cropCanvas.width = Math.max(1, Math.round(targetW));
-        cropCanvas.height = Math.max(1, Math.round(targetH));
-        const cropCtx = cropCanvas.getContext('2d');
-
-        cropCtx.fillStyle = '#ffffff';
-        cropCtx.fillRect(0, 0, cropCanvas.width, cropCanvas.height);
-        cropCtx.drawImage(tempCanvas, targetX, targetY, targetW, targetH, 0, 0, cropCanvas.width, cropCanvas.height);
-
-        // JPG生成
-        const base64Data = cropCanvas.toDataURL('image/jpeg', JPEG_QUALITY);
-        
-        // メモリ解放（GC支援）
-        tempCanvas.width = 0; tempCanvas.height = 0;
-        cropCanvas.width = 0; cropCanvas.height = 0;
-
-        return {
-            dataUrl: base64Data,
-            width: targetW,
-            height: targetH
-        };
-    }
-
-    // --- 出力処理 ---
-    async function exportPDF() {
-        const targetPages = getTargetPageNumbers();
-        const hasValidBox = targetPages.some(p => state.cropBoxes[p - 1] !== null);
-        if (!hasValidBox) return alert('対象ページに抽出枠が設定されていません。');
-        
-        loading.style.display = 'flex';
-        document.querySelector('.loading-text').textContent = 'PDF 書き出し中...';
-        const progContainer = document.getElementById('progress-container');
-        const progBar = document.getElementById('export-progress');
-        const progText = document.getElementById('export-progress-text');
-        progContainer.style.display = 'block';
-        progBar.max = targetPages.length;
-        progBar.value = 0;
-        progText.textContent = `0 / ${targetPages.length} ページ`;
-
-        let completed = 0;
-        
-        try {
-            const layout = document.getElementById('layout-select').value;
-            const sourcePaper = document.getElementById('source-paper-select').value;
-            const targetDpi = parseInt(document.getElementById('dpi-select').value, 10);
-            const exportScale = targetDpi / 72; // 72dpi基準でスケール倍率を算出
-
-            // ポイント単位の最大枠サイズを算出
-            const { width: maxW_pt, height: maxH_pt } = await getMaxCropSizeInPoints(targetPages, sourcePaper);
-
-            const tile = layout === 'tile_a4' ? getA4TileLayout(maxW_pt, maxH_pt) : null;
-
-            const pdfDoc = await PDFLib.PDFDocument.create();
-            let currentPage = null;
-            let currentIdx = 0;
-
-            for (const pageNum of targetPages) {
-                // UIアニメーションコマ更新用ウェイト
-                await new Promise(resolve => setTimeout(resolve, 10));
-
-                const imgData = await extractPageImageData(pageNum, exportScale, sourcePaper);
-                if (!imgData) continue;
-
-                const jpgImage = await pdfDoc.embedJpg(imgData.dataUrl);
-                // DPIは画像の解像度にのみ使い、PDF上の寸法は元のポイント単位に戻す。
-                const img_w_pt = imgData.width / exportScale;
-                const img_h_pt = imgData.height / exportScale;
-                
-                if (layout === 'single') {
-                    const page = pdfDoc.addPage([maxW_pt, maxH_pt]);
-                    const drawX = (maxW_pt - img_w_pt) / 2;
-                    const drawY = (maxH_pt - img_h_pt) / 2;
-                    page.drawImage(jpgImage, {
-                        x: drawX,
-                        y: drawY,
-                        width: img_w_pt,
-                        height: img_h_pt,
-                    });
-                } else {
-                    if (currentIdx % tile.countPerPage === 0) {
-                        currentPage = pdfDoc.addPage(tile.pageSize);
-                    }
-                    
-                    const col = currentIdx % tile.cols;
-                    const row = Math.floor((currentIdx % tile.countPerPage) / tile.cols);
-                    
-                    const drawW = img_w_pt * tile.scale, drawH = img_h_pt * tile.scale;
-                    const drawX = tile.margin + col * (tile.cellWidth + tile.gap) + (tile.cellWidth - drawW) / 2;
-                    const drawY_top = tile.margin + row * (tile.cellHeight + tile.gap) + (tile.cellHeight - drawH) / 2;
-                    const drawY = tile.pageSize[1] - drawY_top - drawH;
-                    
-                    currentPage.drawImage(jpgImage, {
-                        x: drawX,
-                        y: drawY,
-                        width: drawW,
-                        height: drawH,
-                    });
-                    currentIdx++;
-                }
-                                
-                completed++;
-                progBar.value = completed;
-                progText.textContent = `${completed} / ${targetPages.length} ページ`;
-                if (completed % 7 === 0) triggerDinoJump();
-            }
-
-            const pdfBytes = await pdfDoc.save();
-            const blob = new Blob([pdfBytes], { type: "application/pdf" });
-            const prefix = prefixInput.value || 'crop';
-            const suffix = (state.exportScope === 'current') ? `_p${state.pageNum}` : '';
-            saveAs(blob, `${prefix}${suffix}.pdf`);
-
-        } catch (e) {
-            console.error(e);
-            alert('PDF生成中にエラーが発生しました。');
-        } finally {
-            loading.style.display = 'none';
-        }
-    }
-
-    async function exportJPGs() {
-        const targetPages = getTargetPageNumbers();
-        const hasValidBox = targetPages.some(p => state.cropBoxes[p - 1] !== null);
-        if (!hasValidBox) return alert('対象ページに抽出枠が設定されていません。');
-        
-        // File System Access API の対応確認
-        if (!window.showDirectoryPicker) {
-            return alert('お使いのブラウザは直接保存(File System Access API)に対応していません。ChromeまたはEdgeをご利用ください。');
-        }
-
-        let dirHandle;
-        try {
-            // ユーザーに保存先フォルダを選択させる
-            dirHandle = await window.showDirectoryPicker({ mode: 'readwrite' });
-        } catch (err) {
-            // ユーザーが選択をキャンセルした場合
-            if (err.name !== 'AbortError') console.error(err);
-            return; 
-        }
-
-        loading.style.display = 'flex';
-        document.querySelector('.loading-text').textContent = 'PDF 書き出し中...';
-        const progContainer = document.getElementById('progress-container');
-        const progBar = document.getElementById('export-progress');
-        const progText = document.getElementById('export-progress-text');
-        progContainer.style.display = 'block';
-        progBar.max = targetPages.length;
-        progBar.value = 0;
-        progText.textContent = `0 / ${targetPages.length} ページ`;
-
-        let completed = 0;
-        
-        try {
-            const prefix = prefixInput.value || 'crop';
-            const layout = document.getElementById('layout-select').value;
-            const sourcePaper = document.getElementById('source-paper-select').value;
-            const targetDpi = parseInt(document.getElementById('dpi-select').value, 10);
-            const exportScale = targetDpi / 72;
-
-            const { width: maxW_pt, height: maxH_pt } = await getMaxCropSizeInPoints(targetPages, sourcePaper);
-
-            const tile = layout === 'tile_a4' ? getA4TileLayout(maxW_pt, maxH_pt) : null;
-
-            let currentIdx = 0;
-            let a4PageNum = 1;
-            let tileCanvas = null;
-            let tileCtx = null;
-
-            for (const pageNum of targetPages) {
-                // UIアニメーションコマ更新用ウェイト
-                await new Promise(resolve => setTimeout(resolve, 10));
-
-                const imgData = await extractPageImageData(pageNum, exportScale, sourcePaper);
-                if (imgData) {
-                    if (layout === 'single') {
-                        // dataURLをBlob化
-                        const res = await fetch(imgData.dataUrl);
-                        const blob = await res.blob();
-                        
-                        const fileName = `${prefix}_${String(pageNum).padStart(3, '0')}.jpg`;
-                        const fileHandle = await dirHandle.getFileHandle(fileName, { create: true });
-                        const writable = await fileHandle.createWritable();
-                        await writable.write(blob);
-                        await writable.close();
-                    } else {
-                        if (currentIdx % tile.countPerPage === 0) {
-                            tileCanvas = document.createElement('canvas');
-                            tileCanvas.width = tile.pageSize[0] * exportScale;
-                            tileCanvas.height = tile.pageSize[1] * exportScale;
-                            tileCtx = tileCanvas.getContext('2d');
-                            tileCtx.fillStyle = '#ffffff';
-                            tileCtx.fillRect(0, 0, tileCanvas.width, tileCanvas.height);
-                        }
-                        
-                        const col = currentIdx % tile.cols;
-                        const row = Math.floor((currentIdx % tile.countPerPage) / tile.cols);
-                        
-                        const img_w_pt = imgData.width / exportScale;
-                        const img_h_pt = imgData.height / exportScale;
-                        
-                        const x_pt = tile.margin + col * (tile.cellWidth + tile.gap) + (tile.cellWidth - img_w_pt * tile.scale) / 2;
-                        const y_pt = tile.margin + row * (tile.cellHeight + tile.gap) + (tile.cellHeight - img_h_pt * tile.scale) / 2;
-                        
-                        const img = new Image();
-                        await new Promise((resolve, reject) => {
-                            img.onload = resolve;
-                            img.onerror = reject;
-                            img.src = imgData.dataUrl;
-                        });
-                        
-                        tileCtx.drawImage(img, x_pt * exportScale, y_pt * exportScale, imgData.width * tile.scale, imgData.height * tile.scale);
-                        
-                        currentIdx++;
-                        
-                        if (currentIdx % tile.countPerPage === 0) {
-                            const base64 = tileCanvas.toDataURL('image/jpeg', JPEG_QUALITY);
-                            const res = await fetch(base64);
-                            const blob = await res.blob();
-                            
-                            const fileName = `${prefix}_A4_${String(a4PageNum).padStart(3, '0')}.jpg`;
-                            const fileHandle = await dirHandle.getFileHandle(fileName, { create: true });
-                            const writable = await fileHandle.createWritable();
-                            await writable.write(blob);
-                            await writable.close();
-                            a4PageNum++;
-                            
-                            tileCanvas.width = 0;
-                            tileCanvas.height = 0;
-                            tileCanvas = null;
-                            tileCtx = null;
-                        }
-                    }
-                }
-                                
-                completed++;
-                progBar.value = completed;
-                progText.textContent = `${completed} / ${targetPages.length} ページ`;
-                if (completed % 7 === 0) triggerDinoJump();
-            }
-
-            if (layout === 'tile_a4' && tileCanvas) {
-                const base64 = tileCanvas.toDataURL('image/jpeg', JPEG_QUALITY);
-                const res = await fetch(base64);
-                const blob = await res.blob();
-                
-                const fileName = `${prefix}_A4_${String(a4PageNum).padStart(3, '0')}.jpg`;
-                const fileHandle = await dirHandle.getFileHandle(fileName, { create: true });
-                const writable = await fileHandle.createWritable();
-                await writable.write(blob);
-                await writable.close();
-            }
-
-            alert('フォルダへの保存が完了しました。');
-
-        } catch (e) {
-            console.error(e);
-            alert('JPG保存中にエラーが発生しました。');
-        } finally {
-            loading.style.display = 'none';
-        }
-    }
 </script>
+<script src="preview.js"></script>
 </body>
 </html>

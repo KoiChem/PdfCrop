@@ -120,7 +120,7 @@ async () => {
         ]) {
             if (paper) paper.value = f.paper || 'pdf';
             await source(f.size, f.box, f.count);
-            const out = await pdf('tile_a4');
+            const out = await pdf(f.landscape ? 'tile_a4_landscape' : 'tile_a4');
             check('tile page count', out.getPageCount(), f.pages);
             let images = 0;
             for (const p of out.getPages()) {

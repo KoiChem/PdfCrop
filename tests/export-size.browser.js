@@ -48,8 +48,8 @@ async () => {
     try {
         // Literal physical sizes: a 72-unit mark is 54/72/144 points respectively.
         for (const fixture of [
-            { unit: 0.75, width: 135, height: 108, mark: 54, a4: [841.89, 595.28] },
-            { unit: 1, width: 180, height: 144, mark: 72, a4: [841.89, 595.28] },
+            { unit: 0.75, width: 135, height: 108, mark: 54, a4: [595.28, 841.89] },
+            { unit: 1, width: 180, height: 144, mark: 72, a4: [595.28, 841.89] },
             { unit: 2, width: 360, height: 288, mark: 144, a4: [595.28, 841.89] }
         ]) {
             const source = await PDFLib.PDFDocument.create();
@@ -68,7 +68,7 @@ async () => {
                     document.getElementById('dpi-select').value = dpi;
                     const label = `UserUnit ${fixture.unit} / ${dpi} DPI / zoom ${zoom}`;
 
-                    const raster = await extractPageImageData(1, Number(dpi) / 72);
+                    const raster = await extractPageImageData((await buildOutputPlan()).frames[0], Number(dpi) / 72, state.pdfDoc);
                     check(`${label} raster width`, raster.width, fixture.width * Number(dpi) / 72);
                     check(`${label} raster height`, raster.height, fixture.height * Number(dpi) / 72);
 
